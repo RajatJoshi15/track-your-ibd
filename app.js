@@ -52,7 +52,14 @@ const tagLabel = t => (t === 'High-fiber' ? 'High-fibre' : t);
 const FLOW = ['No bleeding', 'Spotting', 'Light', 'Medium', 'Heavy'];
 const PERIOD_SYMPTOMS = ['Cramps', 'Bloating', 'Back pain', 'Headache', 'Breast tenderness', 'Mood changes', 'Tiredness', 'Nausea'];
 const MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner', 'Snack', 'Drink'];
-const FOOD_TAGS = ['Dairy', 'Spicy', 'High-fiber', 'Fried or fatty', 'Gluten', 'High-FODMAP', 'Alcohol', 'Caffeine', 'Raw veg', 'Sugary', 'Red meat', 'Processed'];
+// Tag values are stored as written here, so never rename one; add new ones instead.
+const TAG_GROUPS = [
+  ['Foods', ['Dairy', 'Gluten', 'Red meat', 'Processed', 'Eggs', 'Seafood', 'Beans or lentils', 'Nuts or seeds', 'Raw veg', 'Whole grains', 'Fruit', 'Onion or garlic', 'Chocolate', 'Acidic (tomato, citrus)']],
+  ['How it was made', ['Spicy', 'Fried or fatty', 'Sugary', 'High-fiber', 'High-FODMAP', 'Takeaway or restaurant']],
+  ['Drinks and additives', ['Alcohol', 'Caffeine', 'Fizzy drinks', 'Fruit juice', 'Artificial sweeteners']],
+];
+const FOOD_TAGS = TAG_GROUPS.flatMap(g => g[1]);
+const SEVERITY = ['None', 'Mild', 'Moderate', 'Severe'];
 const PORTIONS = ['Small', 'Normal', 'Large'];
 const EX_TYPES = ['Walk', 'Run', 'Cycling', 'Strength', 'Yoga', 'Swimming', 'Sport', 'Other'];
 const INTENSITY = ['Easy', 'Moderate', 'Hard'];
@@ -105,7 +112,7 @@ const PRESETS = [
 
 /* ---------- state ---------- */
 const LS_KEY = 'ibd-tracker-v1';
-const DEFAULT_SETTINGS = { condition: null, waterGoal: 8, glassMl: 250, weightUnit: 'kg', favorites: [], sleepPending: null, started: false, lastBackup: null, backupEvery: 7, backupSnooze: null, installTipHidden: false, trackCycle: false, favDismissed: [] };
+const DEFAULT_SETTINGS = { condition: null, waterGoal: 8, glassMl: 250, weightUnit: 'kg', favorites: [], sleepPending: null, started: false, lastBackup: null, backupEvery: 7, backupSnooze: null, installTipHidden: false, trackCycle: false, favDismissed: [], customTags: [], showAlcohol: true, showSmoking: true };
 let R = { days: {}, meds: {}, settings: clone(DEFAULT_SETTINGS) };
 let SAMPLE = null;
 const D = () => SAMPLE || R;
@@ -227,7 +234,7 @@ function saveSettings() { persist('meta/settings', D().settings); }
 function saveMed(m) { D().meds[m.id] = m; persist('meds/' + m.id, m); scheduleRender(); }
 function deleteMed(id) { delete D().meds[id]; persist('meds/' + id, null); scheduleRender(); }
 
-function blankDay(date) { return { date, bm: [], meals: [], doses: [], exercise: [], naps: [], water: 0, sleep: null, checkin: null }; }
+function blankDay(date) { return { date, bm: [], meals: [], doses: [], exercise: [], naps: [], water: 0, drinks: [], cigs: [], sleep: null, checkin: null }; }
 function getDay(date) { return D().days[date] || blankDay(date); }
 function mutDay(date, fn) {
   const d = Object.assign(blankDay(date), clone(D().days[date] || {}));
@@ -502,7 +509,9 @@ function autoFactors(date) {
   const last = meals.map(x => x.t).filter(Boolean).sort().pop();
   if (last) out.push(`Last meal ${fmtTime(last)}`);
   if (meals.some(x => (x.tags || []).includes('Caffeine') && x.t >= '14:00')) out.push('Caffeine after 2 PM');
-  if (meals.some(x => (x.tags || []).includes('Alcohol'))) out.push('Alcohol');
+  const nd = (pd.drinks || []).length;
+  if (nd) out.push(`Alcohol (${nd} ${plural(nd, 'drink', 'drinks')})`);
+  else if (meals.some(x => (x.tags || []).includes('Alcohol'))) out.push('Alcohol');
   const meds = D().meds;
   if ((pd.doses || []).some(x => x.status === 'taken' && x.t >= '14:00' && meds[x.medId] && meds[x.medId].category === 'Steroid')) out.push('Steroid after 2 PM');
   return out;
@@ -561,6 +570,7 @@ function makeSample() {
     d.meals.push(meal(ri(780, 810), 'Lunch', pick(L)));
     if (rnd() < 0.35) d.meals.push(meal(ri(980, 1000), 'Snack', ['Banana and almonds', ['High-fiber'], [5, 3, 5, 6]]));
     d.meals.push(meal(ri(1185, 1230), 'Dinner', pick(N)));
+    if (i % 11 === 4 && !isT) d.drinks = ['20:45', '21:40'];
     if (i % 11 === 4) d.meals.push(meal(1260, 'Drink', ['Glass of wine', ['Alcohol']]));
     d.meals = d.meals.filter(x => toMin(x.t) <= cut);
     d.water = isT ? Math.min(ri(5, 8), Math.floor(nowM / 110)) : ri(4, 8);
@@ -587,7 +597,7 @@ function makeSample() {
       d.checkin = {
         t: '21:30', wellbeing: p < 0.3 ? ri(2, 3) : p < 0.6 ? ri(1, 2) : ri(0, 1),
         pain: clamp(Math.round(6 - 5 * p + r(-1, 1)), 0, 10), fatigue: clamp(Math.round(7 - 4 * p + r(-1, 1)), 0, 10),
-        stress: p < 0.4 ? ri(2, 4) : ri(1, 3), mood: p < 0.4 ? ri(2, 3) : ri(3, 4), tenesmus: p < 0.35 && rnd() < 0.6,
+        stress: p < 0.4 ? ri(2, 4) : ri(1, 3), bloating: p < 0.4 ? ri(1, 2) : ri(0, 1), nausea: p < 0.3 && rnd() < 0.4 ? 1 : 0, mood: p < 0.4 ? ri(2, 3) : ri(3, 4), tenesmus: p < 0.35 && rnd() < 0.6,
         extra: p < 0.3 && rnd() < 0.5 ? ['joints'] : [], weight: wd === 1 ? Math.round((64.6 + p * 0.9 + r(-0.2, 0.2)) * 10) / 10 : null, note: '',
       };
     }
@@ -738,15 +748,21 @@ function quickGrid(date) {
     `<button class="qbtn k-${k}" data-act="new" data-kind="${k}">${icon(k)}<strong>${label}</strong><small>${esc(sub)}</small></button>`).join('')}</div>`;
 }
 function waterCard(date) {
-  const day = getDay(date), n = day.water || 0, goal = D().settings.waterGoal || 8, ml = D().settings.glassMl || 250;
+  const day = getDay(date), st = D().settings, n = day.water || 0, goal = st.waterGoal || 8, ml = st.glassMl || 250;
   const pips = Array.from({ length: Math.max(goal, n) }, (_, i) => `<i class="${i < n ? 'on' : ''}"></i>`).join('');
   const mac = mealMacros(day), rated = MACROS.some(([k]) => mac[k] != null);
   const macHtml = rated ? `<div class="macro-row" aria-label="Average food ratings for this day">${MACROS.map(([k, label, c]) => `<div class="macro"><span class="lbl"><span>${label}</span><span class="mono">${mac[k] != null ? fmtNum(mac[k]) : '–'}/10</span></span><div class="macro-bar ${c}"><i style="width:${(mac[k] || 0) * 10}%"></i></div></div>`).join('')}</div>` : '';
+  const counter = (k, ic, label, one, many) => {
+    const list = day[k] || [], c = list.length, last = list[list.length - 1];
+    return `<div class="water-row counter k-${k}">${icon(ic)}<div class="grow"><strong>${label}</strong> <span class="muted">${c ? `${c} ${plural(c, one, many)}${last && date === today() ? ` · last at ${fmtTime(last)}` : ''}` : 'None'}</span></div>
+      <button class="icon-btn bordered" data-act="count" data-k="${k}" data-d="-1" aria-label="Remove one ${one}" ${c ? '' : 'disabled'}>${icon('minus')}</button>
+      <button class="icon-btn bordered" data-act="count" data-k="${k}" data-d="1" aria-label="Add one ${one}">${icon('plus')}</button></div>`;
+  };
   return `<section class="card"><div class="water-row">${icon('water')}
     <div class="grow"><strong>Water</strong> <span class="muted">${n} of ${goal} glasses · ${fmtNum((n * ml) / 1000)} L</span><div class="pips" aria-hidden="true">${pips}</div></div>
     <button class="icon-btn bordered" data-act="water" data-d="-1" aria-label="Remove a glass" ${n ? '' : 'disabled'}>${icon('minus')}</button>
     <button class="icon-btn bordered" data-act="water" data-d="1" aria-label="Add a glass">${icon('plus')}</button>
-  </div>${macHtml}</section>`;
+  </div>${st.showAlcohol !== false ? counter('drinks', 'drink', 'Alcohol', 'drink', 'drinks') : ''}${st.showSmoking !== false ? counter('cigs', 'smoke', 'Smoking', 'cigarette', 'cigarettes') : ''}${macHtml}</section>`;
 }
 function sleepCard(date) {
   const isToday = date === today(), day = getDay(date), sl = day.sleep, c = sleepCalc(date, sl);
@@ -836,9 +852,10 @@ function medsDueCard(date) {
 }
 function timeline(date) {
   const day = getDay(date), items = [];
-  const push = (t, kind, title, sub, attrs) => items.push({ m: toMin(t) ?? 0, t, kind, title, sub, attrs });
+  const push = (t, kind, title, sub, attrs, rm) => items.push({ m: toMin(t) ?? 0, t, kind, title, sub, attrs, rm });
+  const rmBtn = (list, id, what) => `data-act="rmEntry" data-list="${list}" data-id="${id}" aria-label="Delete this ${what}" title="Delete"`;
   const sl = day.sleep, c = sleepCalc(date, sl);
-  if (sl && c) push(sl.wake, 'sleep', 'Woke up', `${fmtDur(c.total)} asleep · in bed ${fmtTime(sl.inBed)}${sl.quality ? ` · quality ${sl.quality}/5` : ''}`, `data-act="editSleep" data-date="${date}"`);
+  if (sl && c) push(sl.wake, 'sleep', 'Woke up', `${fmtDur(c.total)} asleep · in bed ${fmtTime(sl.inBed)}${sl.quality ? ` · quality ${sl.quality}/5` : ''}`, `data-act="editSleep" data-date="${date}"`, `data-act="rmSleep" data-date="${date}" aria-label="Delete this night" title="Delete"`);
   const next = (D().days[addDays(date, 1)] || {}).sleep;
   if (next && toMin(next.inBed) >= 900) push(next.inBed, 'sleep', 'Went to bed', '', `data-act="editSleep" data-date="${addDays(date, 1)}"`);
   const pend = D().settings.sleepPending;
@@ -850,20 +867,23 @@ function timeline(date) {
     if (b.pain) bits.push(`pain ${b.pain}/10`);
     if (b.night) bits.push('at night');
     if (b.note) bits.push(esc(b.note));
-    push(b.t, 'bm', `Bathroom${b.bristol ? ` · type ${b.bristol}` : ''}`, bits.join(' · '), `data-act="edit" data-kind="bm" data-id="${b.id}"`);
+    push(b.t, 'bm', `Bathroom${b.bristol ? ` · type ${b.bristol}` : ''}`, bits.join(' · '), `data-act="edit" data-kind="bm" data-id="${b.id}"`, rmBtn('bm', b.id, 'bathroom trip'));
   }
   for (const x of day.meals || []) {
     const mac = MACROS.filter(([k]) => typeof x[k] === 'number').map(([k, label]) => `${label.toLowerCase()} ${x[k]}`).join(', ');
-    push(x.t, 'meal', `${esc(x.type || 'Meal')} · ${esc(x.desc)}`, esc([mac, (x.tags || []).map(tagLabel).join(', '), x.portion && x.portion !== 'Normal' ? x.portion.toLowerCase() + ' portion' : '', x.note].filter(Boolean).join(' · ')), `data-act="edit" data-kind="meal" data-id="${x.id}"`);
+    push(x.t, 'meal', `${esc(x.type || 'Meal')} · ${esc(x.desc)}`, esc([mac, (x.tags || []).map(tagLabel).join(', '), x.portion && x.portion !== 'Normal' ? x.portion.toLowerCase() + ' portion' : '', x.note].filter(Boolean).join(' · ')), `data-act="edit" data-kind="meal" data-id="${x.id}"`, rmBtn('meals', x.id, 'meal'));
   }
-  for (const x of day.exercise || []) push(x.t, 'ex', `${esc(x.type)} · ${x.mins || 0} min`, esc([x.intensity, x.steps ? `${fmtNum(x.steps)} steps` : '', x.symptoms && x.symptoms !== 'None' ? x.symptoms.toLowerCase() : ''].filter(Boolean).join(' · ')), `data-act="edit" data-kind="ex" data-id="${x.id}"`);
-  for (const x of day.naps || []) push(x.t, 'nap', `Nap · ${x.mins} min`, esc(x.note || ''), `data-act="edit" data-kind="nap" data-id="${x.id}"`);
+  for (const x of day.exercise || []) push(x.t, 'ex', `${esc(x.type)} · ${x.mins || 0} min`, esc([x.intensity, x.steps ? `${fmtNum(x.steps)} steps` : '', x.symptoms && x.symptoms !== 'None' ? x.symptoms.toLowerCase() : ''].filter(Boolean).join(' · ')), `data-act="edit" data-kind="ex" data-id="${x.id}"`, rmBtn('exercise', x.id, 'exercise'));
+  for (const x of day.naps || []) push(x.t, 'nap', `Nap · ${x.mins} min`, esc(x.note || ''), `data-act="edit" data-kind="nap" data-id="${x.id}"`, rmBtn('naps', x.id, 'nap'));
   if (day.checkin) {
     const ci = day.checkin;
-    push(ci.t || '21:00', 'checkin', 'Check-in', esc([WELLBEING[ci.wellbeing ?? 0], `pain ${ci.pain ?? 0}/10`, `fatigue ${ci.fatigue ?? 0}/10`].join(' · ')), `data-act="edit" data-kind="checkin" data-id="ci"`);
+    push(ci.t || '21:00', 'checkin', 'Check-in', esc([WELLBEING[ci.wellbeing ?? 0], `pain ${ci.pain ?? 0}/10`, `fatigue ${ci.fatigue ?? 0}/10`, ci.bloating ? `${SEVERITY[ci.bloating].toLowerCase()} bloating` : '', ci.nausea ? `${SEVERITY[ci.nausea].toLowerCase()} nausea` : ''].filter(Boolean).join(' · ')), `data-act="edit" data-kind="checkin" data-id="ci"`, 'data-act="rmCheckin" aria-label="Delete this check-in" title="Delete"');
   }
   const pd = day.period;
-  if (pd && (pd.flow || (pd.symptoms || []).length)) items.push({ m: -1, t: '', kind: 'period', title: pd.flow ? `Period · ${FLOW[pd.flow].toLowerCase()}` : 'Period symptoms', sub: esc((pd.symptoms || []).join(', ')), attrs: 'data-act="edit" data-kind="period" data-id="p"' });
+  if (pd && (pd.flow || (pd.symptoms || []).length)) items.push({ m: -1, t: '', kind: 'period', title: pd.flow ? `Period · ${FLOW[pd.flow].toLowerCase()}` : 'Period symptoms', sub: esc((pd.symptoms || []).join(', ')), attrs: 'data-act="edit" data-kind="period" data-id="p"', rm: 'data-act="rmPeriod" aria-label="Delete this period entry" title="Delete"' });
+  const nd = (day.drinks || []).length, nc = (day.cigs || []).length;
+  if (nd) items.push({ m: -1, t: '', kind: 'drinks', title: `Alcohol · ${nd} ${plural(nd, 'drink', 'drinks')}`, sub: (day.drinks || []).map(fmtTime).join(', '), attrs: 'data-act="noop"' });
+  if (nc) items.push({ m: -1, t: '', kind: 'cigs', title: `Smoking · ${nc} ${plural(nc, 'cigarette', 'cigarettes')}`, sub: '', attrs: 'data-act="noop"' });
   const groups = {};
   for (const x of day.doses || []) { const k = x.t + '|' + x.status; (groups[k] = groups[k] || []).push(x); }
   for (const [k, list] of Object.entries(groups)) {
@@ -874,7 +894,7 @@ function timeline(date) {
   }
   if (!items.length) return '<p class="empty">Nothing logged for this day yet. Use the buttons to add entries as you go.</p>';
   items.sort((a, b) => a.m - b.m);
-  return `<ul class="tl">${items.map(i => `<li><button class="tl-item k-${i.kind}" ${i.attrs}><time>${i.t ? fmtTime(i.t) : 'All day'}</time><span class="tl-dot"></span><span class="tl-main"><strong>${i.title}</strong>${i.sub ? `<span class="tl-sub">${i.sub}</span>` : ''}</span></button></li>`).join('')}</ul>`;
+  return `<ul class="tl">${items.map(i => `<li><button class="tl-item k-${i.kind}" ${i.attrs}><time>${i.t ? fmtTime(i.t) : 'All day'}</time><span class="tl-dot"></span><span class="tl-main"><strong>${i.title}</strong>${i.sub ? `<span class="tl-sub">${i.sub}</span>` : ''}</span></button>${i.rm ? `<button class="icon-btn small tl-rm" ${i.rm}>${icon('x')}</button>` : ''}</li>`).join('')}</ul>`;
 }
 
 /* ---------- history ---------- */
@@ -1070,6 +1090,8 @@ function viewMore() {
       <form id="settings-form" class="field">
         ${group('Condition', seg('condition', CONDITIONS.map(x => x[1]), st.condition || '', { values: CONDITIONS.map(x => x[0]) }) + `<span class="hint">Crohn's uses the Harvey-Bradshaw Index. The others use the colitis score (SCCAI).</span>`)}
         <label class="toggle"><input type="checkbox" name="trackCycle" id="s-cycle" ${st.trackCycle ? 'checked' : ''}><span>Track my periods</span></label>
+        <label class="toggle"><input type="checkbox" name="showAlcohol" id="s-alcohol" ${st.showAlcohol !== false ? 'checked' : ''}><span>Show the alcohol counter on Today</span></label>
+        <label class="toggle"><input type="checkbox" name="showSmoking" id="s-smoking" ${st.showSmoking !== false ? 'checked' : ''}><span>Show the smoking counter on Today</span></label>
         <div class="row3">
           <label class="field"><span class="lbl">Water goal (glasses)</span><input type="number" id="s-goal" name="waterGoal" min="1" max="30" value="${st.waterGoal}"></label>
           <label class="field"><span class="lbl">Glass size (mL)</span><input type="number" id="s-glass" name="glassMl" min="50" max="1000" step="10" value="${st.glassMl}"></label>
@@ -1079,6 +1101,9 @@ function viewMore() {
     <section class="card"><div class="card-head"><h2>Favourite meals</h2></div>
       ${favs.length ? `<ul class="fav-list">${favs.map((f, i) => `<li><span>${esc(f.desc)} <span class="muted">${esc((f.tags || []).map(tagLabel).join(', '))}</span></span><button class="icon-btn small" data-act="rmFav" data-i="${i}" aria-label="Remove ${esc(f.desc)}">${icon('x')}</button></li>`).join('')}</ul>` : '<p class="empty">Meals you log 3 times within a couple of weeks are added here automatically. You can also tick “Save to favourites” when logging a meal.</p>'}
     </section>
+    <section class="card"><div class="card-head"><h2>Your food tags</h2></div>
+      ${(st.customTags || []).length ? `<ul class="fav-list">${st.customTags.map(t => `<li><span>${esc(t)}</span><button class="icon-btn small" data-act="rmTag" data-tag="${esc(t)}" aria-label="Remove ${esc(t)}">${icon('x')}</button></li>`).join('')}</ul><p class="hint" style="margin-top:8px">Removing a tag keeps it on meals you already logged.</p>` : '<p class="empty">Add your own tags from the meal form, for example a food you suspect.</p>'}
+    </section>
     <section class="card">${aboutScore()}</section>
     ${SAMPLE ? '' : `<section class="card"><div class="card-head"><h2>Sample data</h2></div><p>See what three months of logging looks like without touching your own entries.</p><div class="card-foot"><button class="btn" data-act="enterSample">Look around with sample data</button></div></section>
     <section class="card danger-zone"><div class="card-head"><h2>Delete all data</h2></div><p>Erase every entry, medicine and setting on this device. Save a backup first if you might want them back. This can't be undone.</p><div class="card-foot"><button class="btn danger" data-act="deleteAll">Delete everything on this device</button></div></section>`}
@@ -1087,17 +1112,53 @@ function viewMore() {
 }
 
 /* ---------- trends ---------- */
+// Meal and medicine timing for one day, used by the "timing" table in Trends.
+function timingFeatures(date, day) {
+  const f = { mealCount: 0, gapMax: null, firstMeal: null, lateMeal: null, hadDoses: false, missed: false, late: false, foodOff: false, uneven: false };
+  if (!day) return f;
+  const eats = (day.meals || []).filter(x => x.type !== 'Drink').map(x => toMin(x.t)).filter(m => m != null).sort((a, b) => a - b);
+  f.mealCount = eats.length;
+  for (let i = 1; i < eats.length; i++) f.gapMax = Math.max(f.gapMax || 0, eats[i] - eats[i - 1]);
+  if (eats.length) {
+    f.firstMeal = eats[0];
+    const last = eats[eats.length - 1], next = (D().days[addDays(date, 1)] || {}).sleep, bed = next && toMin(next.inBed) >= 900 ? toMin(next.inBed) : null;
+    f.lateMeal = bed != null ? bed - last < 120 : last >= 21 * 60;
+  }
+  if (date >= today() || date < (firstLogDate() || date)) return f;
+  for (const m of Object.values(D().meds)) {
+    const slots = slotsFor(m, date);
+    if (!slots.length) continue;
+    f.hadDoses = true;
+    const taken = (day.doses || []).filter(x => x.medId === m.id && x.status === 'taken' && toMin(x.t) != null);
+    for (const sl of slots) {
+      const d = taken.find(x => x.slot === sl.time);
+      if (!d) f.missed = true;
+      else if (toMin(d.t) - toMin(sl.time) >= 120) f.late = true;
+    }
+    for (const d of taken) {
+      const near = eats.some(t => Math.abs(t - toMin(d.t)) <= 60);
+      if ((m.food === 'with' && !near) || (m.food === 'empty' && near)) f.foodOff = true;
+    }
+    if (slots.length >= 2 && taken.length >= 2) {
+      const want = slots.map(x => toMin(x.time)).sort((a, b) => a - b), got = taken.map(x => toMin(x.t)).sort((a, b) => a - b);
+      for (let i = 1; i < Math.min(want.length, got.length); i++) if (Math.abs((got[i] - got[i - 1]) - (want[i] - want[i - 1])) >= 180) f.uneven = true;
+    }
+  }
+  return f;
+}
 function trendRows(n, end = today()) {
   const rows = [];
   for (let i = n - 1; i >= 0; i--) {
     const date = addDays(end, -i), day = D().days[date];
     const sc = day ? dayScore(day) : null, bm = (day && day.bm) || [];
-    const c = day ? sleepCalc(date, day.sleep) : null, mac = day ? mealMacros(day) : {};
-    rows.push({
-      date, score: sc ? sc.score : null, trips: bm.length, blood: bm.filter(b => b.blood).length,
+    const c = day ? sleepCalc(date, day.sleep) : null, mac = day ? mealMacros(day) : {}, ci = (day && day.checkin) || {};
+    rows.push(Object.assign({
+      date, day, score: sc ? sc.score : null, trips: bm.length, blood: bm.filter(b => b.blood).length,
       sleep: c && c.total > 0 ? c.total / 60 : null, carbs: mac.carbs ?? null, protein: mac.protein ?? null, fat: mac.fat ?? null, fiber: mac.fiber ?? null,
       tags: new Set(((day && day.meals) || []).flatMap(x => x.tags || [])), flow: (day && day.period && day.period.flow) || 0,
-    });
+      drinks: ((day && day.drinks) || []).length, cigs: ((day && day.cigs) || []).length, bloating: ci.bloating || 0, nausea: ci.nausea || 0,
+      sl: c && c.total > 0 ? { total: c.total, latency: c.latency, quality: day.sleep.quality ?? null, rested: day.sleep.rested ?? null, wakeOther: (day.sleep.pain || 0) + (day.sleep.other || 0), bed: toMin(day.sleep.inBed) >= 900 ? toMin(day.sleep.inBed) - 1440 : toMin(day.sleep.inBed) } : null,
+    }, timingFeatures(date, day)));
   }
   return rows;
 }
@@ -1145,7 +1206,9 @@ function viewTrends() {
     </div>
     <section class="card"><div class="card-head"><h2>Carbs, protein, fat and fibre</h2><span class="muted">average meal rating, 1–10</span></div><div class="chart" data-chart="food" aria-label="Chart of daily carbs, protein, fat and fibre ratings"></div>
       <div class="chart-legend">${MACROS.map(([, l], i) => `<span><i class="line" style="background:var(--s${i + 1})"></i>${l}</span>`).join('')}</div></section>
-    <section class="card"><div class="card-head"><h2>Food and next-day symptoms</h2></div>${triggerTable(rows)}</section>
+    <section class="card"><div class="card-head"><h2>Food, drinks and next-day symptoms</h2></div>${triggerTable(rows)}</section>
+    <section class="card"><div class="card-head"><h2>Meal and medicine timing</h2></div>${afterMealStats(rows)}${timingTable(rows)}</section>
+    <section class="card"><div class="card-head"><h2>Sleep and next-day symptoms</h2></div>${sleepTable(rows)}</section>
     <section class="card"><details data-key="dailyTable" ${S.open.dailyTable ? 'open' : ''}><summary class="section-title" style="cursor:pointer">Daily numbers</summary>${dailyTable(rows)}</details></section>
   </div>`;
 }
@@ -1155,32 +1218,140 @@ function periodCompare(rows) {
   if (on.length < 3 || off.length < 3) return '';
   return `<p class="hint" style="margin-top:8px">Average ${scoreDef().short} on period days: <strong>${fmtNum(round1(mean(on)))}</strong> · other days: <strong>${fmtNum(round1(mean(off)))}</strong></p>`;
 }
-function triggerTable(rows) {
+// For each test: the average score the day after it happened vs the day after it didn't.
+// A test only compares days it applies to (e.g. meal-gap tests need 2+ meals that day).
+// sameDay compares with the row's own score (used for sleep, which is stored on the morning the night ends).
+function patternData(rows, tests, sameDay = false) {
   const next = {};
-  rows.forEach((r, i) => { if (i + 1 < rows.length && rows[i + 1].score != null) next[r.date] = rows[i + 1].score; });
-  const days = rows.filter(r => next[r.date] != null && (r.tags.size || MACROS.some(([k]) => r[k] != null)));
-  if (days.length < 10) return '<p class="empty">Keep logging meals and symptoms for a couple of weeks. This table then compares your next-day score after different foods.</p>';
-  const tests = FOOD_TAGS.map(t => [tagLabel(t), r => r.tags.has(t)]).concat(MACROS.map(([k, l]) => [`${l} rated 6 or more`, r => r[k] != null && r[k] >= 6]));
+  rows.forEach((r, i) => { const t = sameDay ? r : rows[i + 1]; if (t && t.score != null) next[r.date] = t.score; });
   const out = [];
-  for (const [label, has] of tests) {
-    const yes = days.filter(has).map(r => next[r.date]), no = days.filter(r => !has(r)).map(r => next[r.date]);
-    if (yes.length < 3 || no.length < 3) continue;
+  let usable = 0;
+  for (const t of tests) {
+    const days = rows.filter(r => next[r.date] != null && t.applies(r));
+    usable = Math.max(usable, days.length);
+    const yes = days.filter(t.has).map(r => next[r.date]), no = days.filter(r => !t.has(r)).map(r => next[r.date]);
+    if (yes.length < 3 || no.length < 3 || days.length < 10) continue;
     const a = mean(yes), c = mean(no);
-    out.push({ label, n: yes.length, a, c, d: a - c });
+    out.push({ label: t.label, n: yes.length, a, c, d: a - c });
   }
-  if (!out.length) return '<p class="empty">Not enough tagged meals yet. Add tags and food ratings when you log meals.</p>';
-  out.sort((x, y) => y.d - x.d);
+  return { usable, out: out.sort((x, y) => y.d - x.d) };
+}
+const signed = d => `${d > 0 ? '+' : d < 0 ? '−' : ''}${fmtNum(Math.abs(round1(d)))}`;
+// Colour follows the rounded value people see, so a displayed +0.5 is never grey.
+const impactClass = d => { const r = round1(d); return r >= 0.5 ? 'up' : r <= -0.5 ? 'down' : 'flat'; };
+// Diverging bars: right and red = higher (worse) next-day score, left and green = lower (better), grey = under 0.5 either way.
+function impactChart(list) {
+  const def = scoreDef(), max = Math.max(2, ...list.map(o => Math.abs(o.d)));
+  const rows = list.map(o => {
+    const w = (Math.abs(o.d) / max) * 42, up = o.d >= 0;
+    const bar = `${up ? 'left' : 'right'}:50%;width:${w}%`, val = `${up ? 'left' : 'right'}:calc(50% + ${w}% + 6px)`;
+    const tip = `${o.label}\nNext-day ${def.short}: ${fmtNum(round1(o.a))} after (${o.n} ${plural(o.n, 'day', 'days')})\nOther days: ${fmtNum(round1(o.c))}`;
+    return `<div class="impact-row" data-tip="${esc(tip)}" aria-label="${esc(tip.replace(/\n/g, '. '))}">
+      <div class="impact-label"><span>${esc(o.label)}</span><span class="n">${o.n} ${plural(o.n, 'day', 'days')}</span></div>
+      <div class="impact-track"><span class="impact-bar ${impactClass(o.d)}" style="${bar}"></span><span class="impact-val" style="${val}">${signed(o.d)}</span></div>
+    </div>`;
+  }).join('');
+  return `<div class="impact" role="list">${rows}</div>
+    <div class="impact-axis" aria-hidden="true"><span>← Lower next-day ${def.short}</span><span>Higher next-day ${def.short} →</span></div>
+    <div class="chart-legend"><span><i style="background:var(--lvl-3)"></i>Worse after</span><span><i style="background:var(--lvl-0)"></i>Better after</span><span><i style="background:var(--bar-neutral)"></i>Little difference</span></div>`;
+}
+function patternBlock(key, rows, tests, o) {
+  const { usable, out } = patternData(rows, tests, o.sameDay);
+  if (usable < 10) return `<p class="empty">${o.emptyMsg}</p>`;
+  if (!out.length) return `<p class="empty">${o.noneMsg}</p>`;
+  const top = out.slice().sort((x, y) => Math.abs(y.d) - Math.abs(x.d)).slice(0, 8).sort((x, y) => y.d - x.d);
   const def = scoreDef();
-  return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Food</th><th>Days</th><th>Next-day ${def.short}</th><th>Other days</th><th>Difference</th></tr></thead><tbody>
-    ${out.map(o => `<tr><td>${esc(o.label)}</td><td>${o.n}</td><td>${fmtNum(round1(o.a))}</td><td>${fmtNum(round1(o.c))}</td><td class="${o.d >= 0.5 ? 'delta-up' : o.d <= -0.5 ? 'delta-down' : ''}">${o.d > 0 ? '+' : o.d < 0 ? '−' : ''}${fmtNum(Math.abs(round1(o.d)))}</td></tr>`).join('')}
-  </tbody></table></div><p class="hint" style="margin-top:8px">Patterns in your own log, not proof that a food causes symptoms. Talk to your doctor or dietitian before cutting foods out.</p>`;
+  const table = `<div class="tbl-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>${o.heading}</th><th>Days</th><th>Next-day ${def.short}</th><th>Other days</th><th>Difference</th></tr></thead><tbody>
+    ${out.map(x => `<tr><td>${esc(x.label)}</td><td>${x.n}</td><td>${fmtNum(round1(x.a))}</td><td>${fmtNum(round1(x.c))}</td><td class="${{ up: 'delta-up', down: 'delta-down', flat: '' }[impactClass(x.d)]}">${signed(x.d)}</td></tr>`).join('')}
+  </tbody></table></div>`;
+  return `${impactChart(top)}
+    ${out.length > top.length ? `<p class="hint" style="margin-top:6px">Showing the ${top.length} biggest differences. The table has all ${out.length}.</p>` : ''}
+    <details class="more-table" data-key="${key}" ${S.open[key] ? 'open' : ''}><summary>Show as a table</summary>${table}</details>
+    <p class="hint" style="margin-top:8px">${o.note}</p>`;
+}
+function triggerTable(rows) {
+  const ate = r => r.tags.size || MACROS.some(([k]) => r[k] != null) || r.drinks || r.cigs;
+  const st = D().settings, tags = FOOD_TAGS.concat(st.customTags || []).filter(t => !(t === 'Alcohol' && st.showAlcohol !== false));
+  const tests = tags.map(t => ({ label: tagLabel(t), has: r => r.tags.has(t), applies: ate }))
+    .concat(MACROS.map(([k, l]) => ({ label: `${l} rated 6 or more`, has: r => r[k] != null && r[k] >= 6, applies: ate })));
+  if (st.showAlcohol !== false) tests.push({ label: 'Any alcohol', has: r => r.drinks > 0 || r.tags.has('Alcohol'), applies: ate }, { label: '3 or more drinks', has: r => r.drinks >= 3, applies: ate });
+  if (st.showSmoking !== false) tests.push({ label: 'Smoked', has: r => r.cigs > 0, applies: ate });
+  return patternBlock('tblFood', rows, tests, {
+    heading: 'What you had',
+    emptyMsg: 'Keep logging meals and symptoms for a couple of weeks. This then compares your next-day score after different foods.',
+    noneMsg: 'Not enough tagged meals yet. Add tags and food ratings when you log meals.',
+    note: 'Patterns in your own log, not proof that a food causes symptoms. Talk to your doctor or dietitian before cutting foods out.',
+  });
+}
+function timingTable(rows) {
+  const meals2 = r => r.mealCount >= 2, meals1 = r => r.mealCount >= 1, doses = r => r.hadDoses;
+  const tests = [
+    { label: 'A gap of 5+ hours between meals', has: r => r.gapMax >= 300, applies: meals2 },
+    { label: 'First meal after 11 AM', has: r => r.firstMeal >= 660, applies: meals1 },
+    { label: 'Ate within 2 hours of bed (or after 9 PM)', has: r => r.lateMeal === true, applies: r => r.lateMeal != null },
+    { label: 'Missed a scheduled dose', has: r => r.missed, applies: doses },
+    { label: 'A dose taken 2+ hours late', has: r => r.late, applies: doses },
+    { label: 'A medicine taken against its food instructions', has: r => r.foodOff, applies: r => r.hadDoses && r.mealCount >= 1 },
+    { label: 'Uneven gap between doses of the same medicine', has: r => r.uneven, applies: doses },
+  ];
+  return patternBlock('tblTiming', rows, tests, {
+    heading: 'What happened',
+    emptyMsg: 'Keep logging meals, doses and symptoms for a couple of weeks. This then shows whether meal gaps or dose timing line up with a higher score the next day.',
+    noneMsg: 'No clear timing patterns yet. Keep logging meals and doses with their times.',
+    note: '“Against its food instructions” means a “with food” medicine taken more than an hour from a meal, or an “empty stomach” one taken within an hour of eating. Patterns, not proof: talk to your doctor before changing when you take medicines.',
+  });
+}
+// Each night is compared with the score of the day that follows it, which is the day the night is stored on.
+function sleepTable(rows) {
+  const nights = rows.filter(r => r.sl), beds = nights.map(r => r.sl.bed).sort((a, b) => a - b);
+  const usual = beds.length ? beds[Math.floor(beds.length / 2)] : null;
+  const has = r => !!r.sl;
+  const tests = [
+    { label: 'Under 6 hours asleep', has: r => r.sl.total < 360, applies: has },
+    { label: 'Under 7 hours asleep', has: r => r.sl.total < 420, applies: has },
+    { label: 'Took 30+ minutes to fall asleep', has: r => r.sl.latency >= 30, applies: has },
+    { label: 'Woke from pain or other reasons (not the bathroom)', has: r => r.sl.wakeOther >= 1, applies: has },
+    { label: 'Poor sleep quality (1–2 out of 5)', has: r => r.sl.quality <= 2, applies: r => has(r) && r.sl.quality != null },
+    { label: 'Woke up not rested (1–2 out of 5)', has: r => r.sl.rested <= 2, applies: r => has(r) && r.sl.rested != null },
+    { label: 'Went to bed after midnight', has: r => r.sl.bed >= 0, applies: has },
+    { label: 'Bedtime an hour or more off your usual', has: r => Math.abs(r.sl.bed - usual) >= 60, applies: r => has(r) && usual != null },
+  ];
+  const intro = usual != null && nights.length >= 5 ? `<p style="margin-bottom:10px">Your usual bedtime is around <strong>${fmtTime(fromMin(usual))}</strong>.</p>` : '';
+  return intro + patternBlock('tblSleep', rows, tests, {
+    heading: 'The night before', sameDay: true,
+    emptyMsg: 'Keep logging your nights and symptoms for a couple of weeks. This then compares your score after different kinds of nights.',
+    noneMsg: 'No clear sleep patterns yet. Keep logging your nights, including quality and how rested you feel.',
+    note: 'Each night is compared with your score the day after it. Bathroom trips at night both break up sleep and add to the score, so a rough night and a higher score can go together for that reason alone. That is why the wake-up row leaves bathroom trips out.',
+  });
+}
+// How soon bathroom trips follow meals: a common IBD pattern (the gut speeds up after eating).
+function afterMealStats(rows) {
+  let withMeal = 0, soon = 0, sum = 0;
+  const gaps = [];
+  for (const r of rows) {
+    if (!r.day) continue;
+    const eats = (r.day.meals || []).filter(x => x.type !== 'Drink').map(x => toMin(x.t)).filter(m => m != null);
+    for (const b of r.day.bm || []) {
+      if (b.night) continue;
+      const t = toMin(b.t), before = eats.filter(m => m <= t);
+      if (!before.length) continue;
+      const d = t - Math.max(...before);
+      if (d > 240) continue;
+      withMeal++; if (d <= 60) { soon++; sum += d; }
+    }
+    if (r.gapMax != null) gaps.push(r.gapMax);
+  }
+  const parts = [];
+  if (withMeal >= 10) parts.push(`<strong>${Math.round((soon / withMeal) * 100)}%</strong> of your daytime bathroom trips came within an hour of eating${soon ? `, on average ${Math.round(sum / soon)} minutes after` : ''}.`);
+  if (gaps.length >= 5) parts.push(`Your longest gap between meals was <strong>${fmtDur(mean(gaps))}</strong> on an average day.`);
+  return parts.length ? `<p style="margin-bottom:10px">${parts.join(' ')}</p>` : '';
 }
 function dailyTable(rows) {
-  const r = rows.slice().reverse().filter(x => x.score != null || x.trips || x.sleep != null || MACROS.some(([k]) => x[k] != null));
+  const r = rows.slice().reverse().filter(x => x.score != null || x.trips || x.sleep != null || x.drinks || x.cigs || MACROS.some(([k]) => x[k] != null));
   if (!r.length) return '<p class="empty" style="margin-top:8px">Nothing logged in this period.</p>';
   const v = x => (x == null ? '–' : fmtNum(round1(x)));
-  return `<div class="tbl-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>Day</th><th>${scoreDef().short}</th><th>Trips</th><th>With blood</th><th>Sleep</th><th>Carbs</th><th>Protein</th><th>Fat</th><th>Fibre</th>${D().settings.trackCycle ? '<th>Period</th>' : ''}</tr></thead><tbody>
-    ${r.map(x => `<tr><td>${fmtDay(x.date)}</td><td>${v(x.score)}</td><td>${x.trips}</td><td>${x.blood}</td><td>${x.sleep != null ? fmtDur(x.sleep * 60) : '–'}</td><td>${v(x.carbs)}</td><td>${v(x.protein)}</td><td>${v(x.fat)}</td><td>${v(x.fiber)}</td>${D().settings.trackCycle ? `<td>${x.flow ? FLOW[x.flow] : '–'}</td>` : ''}</tr>`).join('')}
+  return `<div class="tbl-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>Day</th><th>${scoreDef().short}</th><th>Trips</th><th>With blood</th><th>Sleep</th><th>Carbs</th><th>Protein</th><th>Fat</th><th>Fibre</th><th>Bloating</th><th>Nausea</th>${D().settings.showAlcohol !== false ? '<th>Drinks</th>' : ''}${D().settings.showSmoking !== false ? '<th>Cigarettes</th>' : ''}${D().settings.trackCycle ? '<th>Period</th>' : ''}</tr></thead><tbody>
+    ${r.map(x => `<tr><td>${fmtDay(x.date)}</td><td>${v(x.score)}</td><td>${x.trips}</td><td>${x.blood}</td><td>${x.sleep != null ? fmtDur(x.sleep * 60) : '–'}</td><td>${v(x.carbs)}</td><td>${v(x.protein)}</td><td>${v(x.fat)}</td><td>${v(x.fiber)}</td><td>${x.bloating ? SEVERITY[x.bloating] : '–'}</td><td>${x.nausea ? SEVERITY[x.nausea] : '–'}</td>${D().settings.showAlcohol !== false ? `<td>${x.drinks}</td>` : ''}${D().settings.showSmoking !== false ? `<td>${x.cigs}</td>` : ''}${D().settings.trackCycle ? `<td>${x.flow ? FLOW[x.flow] : '–'}</td>` : ''}</tr>`).join('')}
   </tbody></table></div>`;
 }
 
@@ -1416,7 +1587,7 @@ function sheetMeal(date, entry) {
       ${rate('protein', 'Protein', '1 = very little, 10 = a lot')}
       ${rate('fiber', 'Fibre', '1 = very little, 10 = lots of veg, whole grains or beans')}
       ${rate('fat', 'Fat', '1 = very little, 10 = very rich or fried')}
-      ${group('Tags <span class="hint">used to spot triggers</span>', chips('tags', FOOD_TAGS.map(tagLabel), e.tags || [], FOOD_TAGS))}
+      ${group('Tags <span class="hint">used to spot triggers</span>', TAG_GROUPS.map(([g, list]) => `<div class="tag-group"><span class="sublbl">${g}</span>${chips('tags', list.map(tagLabel), e.tags || [], list)}</div>`).join('') + customTagBlock(e.tags || []))}
       ${noteField(e.note)}
       ${favs.some(f => f.desc === e.desc) ? '' : '<label class="toggle"><input type="checkbox" name="fav" id="f-fav"><span>Save to favourites</span></label>'}`,
     onSave: fd => {
@@ -1429,6 +1600,29 @@ function sheetMeal(date, entry) {
     },
     onDelete: entry ? () => removeEntry(date, 'meals', e.id, 'meal') : null,
   });
+}
+
+// Tags people make themselves. They're kept in settings so they show up on every meal.
+function customTagBlock(selected) {
+  const own = (D().settings.customTags || []).concat(selected.filter(t => !FOOD_TAGS.includes(t) && !(D().settings.customTags || []).includes(t)));
+  return `<div class="tag-group"><span class="sublbl">Your tags</span><div class="chips" data-custom-tags>${own.map(t => `<label><input type="checkbox" name="tags" value="${esc(t)}" ${selected.includes(t) ? 'checked' : ''}><span>${esc(t)}</span></label>`).join('')}</div>
+    <div class="inline add-tag"><input type="text" id="f-newtag" placeholder="Add your own, e.g. Mango" maxlength="30" autocomplete="off" aria-label="New tag"><button type="button" class="btn small" data-act="addTag">Add tag</button></div></div>`;
+}
+function addCustomTag(form) {
+  const input = form && form.querySelector('#f-newtag'), v = input ? input.value.trim().replace(/\s+/g, ' ') : '';
+  if (!v) return;
+  const lower = v.toLowerCase(), st = D().settings;
+  const existing = FOOD_TAGS.concat(st.customTags || []).find(t => t.toLowerCase() === lower || tagLabel(t).toLowerCase() === lower);
+  if (existing) {
+    const box = [...form.querySelectorAll('input[name=tags]')].find(c => c.value === existing);
+    if (box) box.checked = true;
+  } else {
+    st.customTags = (st.customTags || []).concat(v).slice(-60);
+    saveSettings();
+    form.querySelector('[data-custom-tags]').insertAdjacentHTML('beforeend', `<label><input type="checkbox" name="tags" value="${esc(v)}" checked><span>${esc(v)}</span></label>`);
+  }
+  input.value = '';
+  input.focus();
 }
 
 // A meal logged 3 times, with no more than 15 days between one log and the next, becomes a favourite.
@@ -1501,7 +1695,7 @@ function sheetNap(date, entry) {
 /* ---------- check-in ---------- */
 function sheetCheckin(date) {
   const cur = getDay(date).checkin;
-  const e = cur || { t: date === today() ? nowHM() : '21:00', wellbeing: 0, pain: 0, fatigue: 0, stress: 2, mood: 3, tenesmus: false, extra: [], weight: null, note: '' };
+  const e = cur || { t: date === today() ? nowHM() : '21:00', wellbeing: 0, pain: 0, fatigue: 0, stress: 2, mood: 3, bloating: 0, nausea: 0, tenesmus: false, extra: [], weight: null, note: '' };
   const wu = D().settings.weightUnit || 'kg';
   openSheet({
     title: cur ? 'Edit check-in' : 'Daily check-in',
@@ -1509,6 +1703,8 @@ function sheetCheckin(date) {
       ${group('Overall, how have you felt today?', seg('wellbeing', WELLBEING, e.wellbeing ?? 0))}
       <div class="field"><label class="lbl" for="f-pain">Belly pain (0–10)</label>${range('pain', 0, 10, e.pain)}</div>
       <div class="field"><label class="lbl" for="f-fatigue">Tiredness (0–10)</label>${range('fatigue', 0, 10, e.fatigue)}</div>
+      ${group('Bloating', seg('bloating', SEVERITY, e.bloating ?? 0))}
+      ${group('Nausea', seg('nausea', SEVERITY, e.nausea ?? 0))}
       ${group('Stress', scale5('stress', e.stress, 'calm', 'very stressed'))}
       ${group('Mood', scale5('mood', e.mood, 'low', 'great'))}
       <label class="toggle"><input type="checkbox" name="tenesmus" id="f-tenesmus" ${e.tenesmus ? 'checked' : ''}><span>Felt the need to go, but nothing came</span></label>
@@ -1516,7 +1712,7 @@ function sheetCheckin(date) {
       <div class="row2">${field(`Weight (${wu})`, numInput('weight', e.weight, 'min="0" placeholder="Optional"'))}<span></span></div>
       ${noteField(e.note)}`,
     onSave: fd => {
-      const x = { t: fd.get('t'), wellbeing: Number(fd.get('wellbeing')) || 0, pain: Number(fd.get('pain')) || 0, fatigue: Number(fd.get('fatigue')) || 0, stress: Number(fd.get('stress')) || null, mood: Number(fd.get('mood')) || null, tenesmus: fd.get('tenesmus') === 'on', extra: fd.getAll('extra'), weight: num(fd.get('weight')), weightUnit: wu, note: (fd.get('note') || '').trim() };
+      const x = { t: fd.get('t'), wellbeing: Number(fd.get('wellbeing')) || 0, pain: Number(fd.get('pain')) || 0, fatigue: Number(fd.get('fatigue')) || 0, stress: Number(fd.get('stress')) || null, mood: Number(fd.get('mood')) || null, bloating: Number(fd.get('bloating')) || 0, nausea: Number(fd.get('nausea')) || 0, tenesmus: fd.get('tenesmus') === 'on', extra: fd.getAll('extra'), weight: num(fd.get('weight')), weightUnit: wu, note: (fd.get('note') || '').trim() };
       mutDay(date, d => { d.checkin = x; });
       if (!cur) toast('Check-in saved');
     },
@@ -1820,9 +2016,11 @@ async function exportCsv() {
     for (const x of d.meals || []) add(date, x.t, 'Meal', x.desc, x.portion, `${x.type}; carbs ${x.carbs ?? '–'}/10; protein ${x.protein ?? '–'}/10; fat ${x.fat ?? '–'}/10; fibre ${x.fiber ?? '–'}/10; tags: ${(x.tags || []).map(tagLabel).join(', ')}`, x.note);
     for (const x of d.doses || []) { const m = meds[x.medId]; add(date, x.t, m ? KINDS[m.kind] : 'Medicine', m ? m.name : x.name, x.amount != null ? `${x.amount} ${x.unit || ''}` : '', x.status === 'taken' ? `Taken${x.slot ? ` (scheduled ${x.slot})` : ''}${x.why ? `; for: ${x.why}` : ''}${x.site ? `; site: ${x.site}` : ''}` : `Skipped: ${x.reason || ''}`, x.note); }
     for (const x of d.exercise || []) add(date, x.t, 'Exercise', x.type, `${x.mins} min`, `${x.intensity}; steps ${x.steps ?? ''}; energy ${x.before ?? ''}→${x.after ?? ''}; symptoms: ${x.symptoms}`, x.note);
-    if (d.checkin) { const c = d.checkin, sc = dayScore(d); add(date, c.t, 'Check-in', WELLBEING[c.wellbeing ?? 0], sc ? `${scoreDef().short} ${sc.score}` : '', `Belly pain ${c.pain}/10; tiredness ${c.fatigue}/10; stress ${c.stress ?? ''}/5; mood ${c.mood ?? ''}/5${c.tenesmus ? '; tenesmus' : ''}; ${(c.extra || []).map(id => (EXTRA.find(e => e.id === id) || {}).label).join(', ')}${c.weight ? `; weight ${c.weight} ${c.weightUnit || ''}` : ''}`, c.note); }
+    if (d.checkin) { const c = d.checkin, sc = dayScore(d); add(date, c.t, 'Check-in', WELLBEING[c.wellbeing ?? 0], sc ? `${scoreDef().short} ${sc.score}` : '', `Belly pain ${c.pain}/10; tiredness ${c.fatigue}/10; stress ${c.stress ?? ''}/5; mood ${c.mood ?? ''}/5; bloating ${SEVERITY[c.bloating || 0].toLowerCase()}; nausea ${SEVERITY[c.nausea || 0].toLowerCase()}${c.tenesmus ? '; tenesmus' : ''}; ${(c.extra || []).map(id => (EXTRA.find(e => e.id === id) || {}).label).join(', ')}${c.weight ? `; weight ${c.weight} ${c.weightUnit || ''}` : ''}`, c.note); }
     if (d.period) add(date, '', 'Period', FLOW[d.period.flow || 0], '', (d.period.symptoms || []).join(', '), d.period.note);
     if (d.water) add(date, '', 'Water', 'Glasses', String(d.water), '', '');
+    if ((d.drinks || []).length) add(date, '', 'Alcohol', 'Drinks', String(d.drinks.length), `At ${d.drinks.join(', ')}`, '');
+    if ((d.cigs || []).length) add(date, '', 'Smoking', 'Cigarettes', String(d.cigs.length), `At ${d.cigs.join(', ')}`, '');
   }
   const csvCell = v => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const res = await saveFile(`track-your-ibd-${today()}.csv`, '﻿' + rows.map(r => r.map(csvCell).join(',')).join('\r\n'), 'text/csv');
@@ -1838,6 +2036,7 @@ function mergeDay(a, b) {
   out.sleep = out.sleep || b.sleep || null;
   out.checkin = out.checkin || b.checkin || null;
   out.period = out.period || b.period || null;
+  for (const k of ['drinks', 'cigs']) out[k] = (b[k] || []).length > (out[k] || []).length ? b[k] : out[k] || [];
   out.water = Math.max(out.water || 0, b.water || 0);
   out.date = b.date; out.updatedAt = Date.now();
   return out;
@@ -1902,6 +2101,10 @@ const A = {
   },
   editSleep(el) { sheetSleep(el.dataset.date || S.date); },
   water(el) { const delta = Number(el.dataset.d); mutDay(S.date, d => { d.water = clamp((d.water || 0) + delta, 0, 40); }); },
+  count(el) {
+    const k = el.dataset.k, add = Number(el.dataset.d) > 0;
+    mutDay(S.date, d => { const list = (d[k] || []).slice(); if (add) { if (list.length < 99) list.push(S.date === today() ? nowHM() : '12:00'); } else list.pop(); d[k] = list; });
+  },
   take(el) { takeDose(S.date, el.dataset.med, el.dataset.time); },
   takeAll(el) { takeAll(S.date, el.dataset.time); },
   doseMore(el) { sheetDose(S.date, { medId: el.dataset.med, slot: el.dataset.time }); },
@@ -1960,6 +2163,12 @@ const A = {
     saveSettings(); render();
   },
   rmDose(el) { removeEntry(S.date, 'doses', el.dataset.id, 'dose log'); },
+  rmEntry(el) { removeEntry(S.date, el.dataset.list, el.dataset.id, { bm: 'bathroom trip', meals: 'meal', exercise: 'exercise', naps: 'nap' }[el.dataset.list]); },
+  rmSleep(el) { const date = el.dataset.date, old = getDay(date).sleep; if (!old) return; mutDay(date, d => { d.sleep = null; }); toast('Deleted night', 'Undo', () => mutDay(date, d => { d.sleep = old; })); },
+  rmCheckin() { const date = S.date, old = getDay(date).checkin; if (!old) return; mutDay(date, d => { d.checkin = null; }); toast('Deleted check-in', 'Undo', () => mutDay(date, d => { d.checkin = old; })); },
+  rmPeriod() { const date = S.date, old = getDay(date).period; if (!old) return; mutDay(date, d => { d.period = null; }); toast('Deleted period entry', 'Undo', () => mutDay(date, d => { d.period = old; })); },
+  addTag(el) { addCustomTag(el.closest('form')); },
+  rmTag(el) { const st = D().settings; st.customTags = (st.customTags || []).filter(t => t !== el.dataset.tag); saveSettings(); render(); },
   openDay(el) { S.date = el.dataset.date; S.followToday = S.date === today(); S.tab = 'today'; render(); window.scrollTo(0, 0); },
   month(el) {
     const [y, m] = S.histMonth.split('-').map(Number);
@@ -2026,17 +2235,22 @@ document.addEventListener('change', e => {
     const st = D().settings;
     if (t.name === 'condition') st.condition = t.value;
     if (t.name === 'trackCycle') st.trackCycle = t.checked;
+    if (t.name === 'showAlcohol') st.showAlcohol = t.checked;
+    if (t.name === 'showSmoking') st.showSmoking = t.checked;
     if (t.name === 'backupEvery') st.backupEvery = Number(t.value) || 7;
     if (t.name === 'waterGoal') st.waterGoal = clamp(Math.round(num(t.value) || 8), 1, 30);
     if (t.name === 'glassMl') st.glassMl = clamp(Math.round(num(t.value) || 250), 50, 1000);
     if (t.name === 'weightUnit') st.weightUnit = t.value === 'lb' ? 'lb' : 'kg';
     saveSettings(); toast('Settings saved');
-    if (t.name === 'condition' || t.name === 'trackCycle') render();
+    if (['condition', 'trackCycle', 'showAlcohol', 'showSmoking'].includes(t.name)) render();
   }
 });
 document.addEventListener('submit', e => { if (e.target.id === 'settings-form') e.preventDefault(); });
 document.addEventListener('toggle', e => { const k = e.target.dataset && e.target.dataset.key; if (k) S.open[k] = e.target.open; }, true);
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && sheetCtx) closeSheet(); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && sheetCtx) closeSheet();
+  if (e.key === 'Enter' && e.target && e.target.id === 'f-newtag') { e.preventDefault(); addCustomTag(e.target.closest('form')); }
+});
 
 /* tooltip for calendar cells (mouse only) */
 const tip = $('#tip');
@@ -2050,7 +2264,7 @@ document.addEventListener('pointerover', e => {
 });
 document.addEventListener('pointerout', e => { if (e.pointerType === 'mouse' && e.target.closest && e.target.closest('[data-tip]')) tip.hidden = true; });
 document.addEventListener('pointerdown', e => {
-  const el = e.target.closest && e.target.closest('.chart [data-tip]');
+  const el = e.target.closest && e.target.closest('.chart [data-tip], .impact [data-tip]');
   if (!el || e.pointerType === 'mouse') return;
   tip.textContent = el.dataset.tip; tip.hidden = false;
   const r = el.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
