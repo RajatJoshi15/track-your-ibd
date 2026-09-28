@@ -652,6 +652,7 @@ function isInstalled() {
 }
 function banners() {
   let h = '';
+  if (waitingWorker) h += `<div class="banner"><p><strong>A new version of Track Your IBD is ready.</strong> Update to get the latest changes. Your entries stay as they are.</p><button class="btn primary small" data-act="applyUpdate">Update now</button></div>`;
   if (SAMPLE) h += `<div class="banner"><p><strong>You're looking at sample data.</strong> It shows what three months of logging looks like. Nothing you change here is saved.</p><button class="btn primary small" data-act="exitSample">${R.settings.started ? 'Back to my log' : 'Start my own log'}</button></div>`;
   if (Store.mode === 'memory' && !SAMPLE) h += `<div class="banner warn"><p>This browser is blocking storage, so entries will be lost when you close the page. Try another browser, or leave private browsing.</p></div>`;
   if (!SAMPLE && Store.mode !== 'memory') {
@@ -2215,6 +2216,7 @@ const A = {
   clearRate(el) { for (const r of el.closest('form').querySelectorAll(`input[name="${el.dataset.k}"]`)) r.checked = false; },
   exitSample() { exitSample(); },
   exportJson() { exportJson(); },
+  applyUpdate() { if (waitingWorker) waitingWorker.postMessage('skipWaiting'); },
   exportCsv() { exportCsv(); },
 };
 
@@ -2282,19 +2284,23 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('pagehide', () => Store.flushAll());
 
 /* ---------- install + offline ---------- */
-let deferredInstall = null;
+let deferredInstall = null, waitingWorker = null, swReg = null;
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; if (S.tab === 'more') render(); });
 window.addEventListener('appinstalled', () => { deferredInstall = null; Store.checkPersist(true); render(); });
 if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
+  // A new version waits until the person taps "Update now" on the banner, so nothing reloads mid-entry.
+  const offer = w => { waitingWorker = w; scheduleRender(); };
   navigator.serviceWorker.register('sw.js').then(reg => {
+    swReg = reg;
+    if (reg.waiting && navigator.serviceWorker.controller) offer(reg.waiting);
     reg.addEventListener('updatefound', () => {
       const w = reg.installing;
       if (!w) return;
-      w.addEventListener('statechange', () => {
-        if (w.state === 'installed' && navigator.serviceWorker.controller) toast('A new version of Track Your IBD is ready', 'Update', () => w.postMessage('skipWaiting'));
-      });
+      w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) offer(w); });
     });
   }).catch(() => {});
+  // Installed apps can stay open for days, so check again whenever the app comes back to the screen.
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && swReg) swReg.update().catch(() => {}); });
   let reloading = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (!reloading) { reloading = true; Store.flush().then(() => location.reload()); } });
 }
