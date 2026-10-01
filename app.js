@@ -64,7 +64,10 @@ const PORTIONS = ['Small', 'Normal', 'Large'];
 const EX_TYPES = ['Walk', 'Run', 'Cycling', 'Strength', 'Yoga', 'Swimming', 'Sport', 'Other'];
 const INTENSITY = ['Easy', 'Moderate', 'Hard'];
 const EX_SYMPTOMS = ['None', 'Some discomfort', 'Had to stop'];
-const SLEEP_FACTORS = ['Screens in bed', 'Stressed', 'Pain', 'Noise or light', 'Too hot or cold'];
+// Stored values stay as first written (e.g. 'Screens in bed'); labels are what people see.
+const BEFORE_BED = [['Reading', 'Reading'], ['Workout', 'Workout'], ['Screens in bed', 'Screens'], ['Late caffeine', 'Late caffeine'], ['Alcohol', 'Alcohol'], ['Heavy or late meal', 'Heavy or late meal'], ['Daytime nap', 'Daytime nap'], ['Worked late', 'Worked late'], ['Stressed', 'Stressed or worried'], ['Relaxation', 'Relaxation or meditation'], ['Warm shower or bath', 'Warm shower or bath']];
+const DURING_NIGHT = [['Pain', 'Pain'], ['Noise or light', 'Noise or light'], ['Too hot or cold', 'Too hot or cold']];
+const sleepFactorLabel = v => (BEFORE_BED.concat(DURING_NIGHT).find(x => x[0] === v) || [v, v])[1];
 const KINDS = { medicine: 'Medicine', vitamin: 'Vitamin', supplement: 'Supplement' };
 const KIND_ORDER = { medicine: 0, vitamin: 1, supplement: 2 };
 const CATEGORIES = ['UC maintenance', 'Steroid', 'Biologic', 'Immunomodulator', 'Small molecule', 'Anti-diarrheal', 'Painkiller', 'Antibiotic', 'Other'];
@@ -151,7 +154,7 @@ function idbWrite(db, entries) {
   });
 }
 function applyRecord(k, v) {
-  if (k.startsWith('days/')) { const id = k.slice(5); if (v) R.days[id] = v; else delete R.days[id]; }
+  if (k.startsWith('days/')) { const id = k.slice(5); if (v) R.days[id] = normDay(v); else delete R.days[id]; }
   else if (k.startsWith('meds/')) { const id = k.slice(5); if (v) R.meds[id] = v; else delete R.meds[id]; }
   else if (k === 'meta/settings') R.settings = Object.assign(clone(DEFAULT_SETTINGS), v || {});
 }
@@ -168,7 +171,7 @@ const Store = {
       try {
         const raw = localStorage.getItem(LS_KEY);
         this.mode = 'local';
-        if (raw) { const o = JSON.parse(raw); R.days = o.days || {}; R.meds = o.meds || {}; R.settings = Object.assign(clone(DEFAULT_SETTINGS), o.settings || {}); }
+        if (raw) { const o = JSON.parse(raw); R.days = o.days || {}; Object.values(R.days).forEach(normDay); R.meds = o.meds || {}; R.settings = Object.assign(clone(DEFAULT_SETTINGS), o.settings || {}); }
       } catch (e2) { this.mode = 'memory'; }
     }
     // Other open tabs of the app tell us what they changed.
@@ -234,10 +237,26 @@ function saveSettings() { persist('meta/settings', D().settings); }
 function saveMed(m) { D().meds[m.id] = m; persist('meds/' + m.id, m); scheduleRender(); }
 function deleteMed(id) { delete D().meds[id]; persist('meds/' + id, null); scheduleRender(); }
 
-function blankDay(date) { return { date, bm: [], meals: [], doses: [], exercise: [], naps: [], water: 0, drinks: [], cigs: [], sleep: null, checkin: null }; }
+function blankDay(date) { return { date, bm: [], urges: [], meals: [], doses: [], exercise: [], naps: [], water: 0, drinks: [], cigs: [], sleep: null, checkins: [] }; }
+// Older versions kept one check-in per day in `checkin`; it becomes the first entry of `checkins`.
+function normDay(d) {
+  if (!d) return d;
+  if (!Array.isArray(d.checkins)) d.checkins = [];
+  if (d.checkin) { if (!d.checkins.length) d.checkins.push(Object.assign({ id: 'ci-' + (d.date || uid()) }, d.checkin)); delete d.checkin; }
+  if (!Array.isArray(d.urges)) d.urges = [];
+  return d;
+}
+// The day's check-ins combined: feeling and pain are averaged; an extra symptom counts if ticked in any check-in.
+function dayCheckin(day) {
+  const list = (day && day.checkins) || [];
+  if (!list.length) return null;
+  const avg = k => { const v = list.map(c => c[k]).filter(x => typeof x === 'number'); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  const w = list.filter(c => c.weight != null).pop(), wb = avg('wellbeing');
+  return { count: list.length, wellbeing: wb == null ? null : Math.round(wb), pain: avg('pain'), fatigue: avg('fatigue'), bloating: avg('bloating'), nausea: avg('nausea'), stress: avg('stress'), mood: avg('mood'), extra: [...new Set(list.flatMap(c => c.extra || []))], tenesmus: list.some(c => c.tenesmus), weight: w ? w.weight : null };
+}
 function getDay(date) { return D().days[date] || blankDay(date); }
 function mutDay(date, fn) {
-  const d = Object.assign(blankDay(date), clone(D().days[date] || {}));
+  const d = normDay(Object.assign(blankDay(date), clone(D().days[date] || {})));
   fn(d);
   d.date = date; d.updatedAt = Date.now();
   D().days[date] = d;
@@ -339,7 +358,7 @@ function taperText(m) {
 function firstLogDate() {
   let min = null;
   for (const [date, d] of Object.entries(D().days)) {
-    const has = (d.bm || []).length || (d.meals || []).length || (d.doses || []).length || d.sleep || d.checkin || (d.exercise || []).length;
+    const has = (d.bm || []).length || (d.urges || []).length || (d.meals || []).length || (d.doses || []).length || d.sleep || (d.checkins || []).length || d.checkin || (d.exercise || []).length;
     if (has && (!min || date < min)) min = date;
   }
   return min;
@@ -420,12 +439,12 @@ const scoreKind = () => (D().settings.condition === 'cd' ? 'hbi' : 'sccai');
 const scoreDef = () => SCORES[scoreKind()];
 function dayScore(day) {
   if (!day) return null;
-  const bm = day.bm || [], ci = day.checkin;
+  const bm = day.bm || [], ci = dayCheckin(day);
   if (!bm.length && !ci) return null;
   let s = 0;
   if (scoreKind() === 'hbi') {
     s += ci ? ci.wellbeing ?? 0 : 0;
-    const p = ci ? ci.pain || 0 : 0;
+    const p = ci ? Math.round(ci.pain || 0) : 0;
     s += p >= 7 ? 3 : p >= 4 ? 2 : p >= 1 ? 1 : 0;
     s += bm.filter(b => (b.bristol || 0) >= 6).length;
     if (ci) s += (ci.extra || []).filter(id => (EXTRA.find(e => e.id === id) || {}).hbi).length;
@@ -488,12 +507,14 @@ function sleepAbs(date, hm, evening) {
 }
 function nightTrips(date, start, end) {
   let n = 0;
-  for (const dd of [addDays(date, -1), date]) for (const b of (D().days[dd] || {}).bm || []) {
+  for (const dd of [addDays(date, -1), date]) for (const b of ((D().days[dd] || {}).bm || []).concat((D().days[dd] || {}).urges || [])) {
     const ts = at(dd, b.t);
     if (ts > start && ts < end) n++;
   }
   return n;
 }
+// How someone felt on waking, 0 (drowsy) to 10 (calm, alert). Older nights used a 1–5 "rested" scale.
+const morningScore = sl => (!sl ? null : sl.morning != null ? sl.morning : sl.rested != null ? Math.round((sl.rested - 1) * 2.5) : null);
 function sleepCalc(date, s) {
   if (!s || !s.inBed || !s.wake) return null;
   const inBed = sleepAbs(date, s.inBed, true), asleep = sleepAbs(date, s.asleep || s.inBed, true);
@@ -563,6 +584,7 @@ function makeSample() {
     for (let k = 0; k < nNight; k++) d.bm.push(bm(ri(120, 300), true));
     for (let k = 0; k < nDay; k++) d.bm.push(bm(390 + (k + r(0.1, 0.9)) * (930 / nDay), false));
     d.bm = d.bm.filter(b => toMin(b.t) <= cut);
+    if (p < 0.35) for (let k = 0; k < ri(1, 2); k++) { const tm = ri(480, 1260); if (tm <= cut) d.urges.push({ id: uid(), t: fromMin(tm), urgency: ri(1, 2), pain: ri(2, 5), night: false, note: '' }); }
 
     const meal = (m, type, [desc, tags, mac]) => ({ id: uid(), t: fromMin(m), type, desc, tags: tags.slice(), portion: 'Normal', carbs: mac ? mac[0] : null, protein: mac ? mac[1] : null, fat: mac ? mac[2] : null, fiber: mac ? mac[3] : null, note: '' });
     d.meals.push(meal(ri(490, 520), 'Breakfast', pick(B)));
@@ -586,7 +608,7 @@ function makeSample() {
 
     const inBed = ri(1360, 1430), asleep = inBed + ri(10, 35), wake = ri(390, 440), up = wake + ri(5, 20);
     if (!isT || nowM > up) {
-      d.sleep = { inBed: fromMin(inBed), asleep: fromMin(asleep), wake: fromMin(wake), up: fromMin(up), quality: p < 0.4 ? ri(2, 3) : ri(3, 4), rested: p < 0.4 ? ri(2, 3) : ri(3, 4), pain: p < 0.3 ? ri(0, 1) : 0, other: rnd() < 0.2 ? 1 : 0, factors: p < 0.3 && rnd() < 0.5 ? ['Pain'] : rnd() < 0.2 ? ['Screens in bed'] : [], note: '' };
+      d.sleep = { inBed: fromMin(inBed), asleep: fromMin(asleep), wake: fromMin(wake), up: fromMin(up), quality: p < 0.4 ? ri(2, 3) : ri(3, 4), morning: p < 0.4 ? ri(2, 5) : ri(5, 8), pain: p < 0.3 ? ri(0, 1) : 0, other: rnd() < 0.2 ? 1 : 0, factors: p < 0.3 && rnd() < 0.5 ? ['Pain'] : rnd() < 0.2 ? ['Screens in bed'] : [], note: '' };
     }
     if (p > 0.3 && rnd() < 0.5) {
       const tm = ri(1080, 1110);
@@ -594,12 +616,13 @@ function makeSample() {
     }
     if (!isT || nowM > 1290) {
       const wd = parseYmd(date).getDay();
-      d.checkin = {
-        t: '21:30', wellbeing: p < 0.3 ? ri(2, 3) : p < 0.6 ? ri(1, 2) : ri(0, 1),
+      if (p < 0.3) d.checkins.push({ id: uid(), t: '09:15', wellbeing: ri(2, 3), pain: clamp(Math.round(7 - 5 * p), 0, 10), fatigue: ri(5, 8), stress: ri(2, 4), mood: ri(2, 3), bloating: ri(1, 2), nausea: rnd() < 0.4 ? 1 : 0, extra: [], weight: null, note: '' });
+      d.checkins.push({
+        id: uid(), t: '21:30', wellbeing: p < 0.3 ? ri(2, 3) : p < 0.6 ? ri(1, 2) : ri(0, 1),
         pain: clamp(Math.round(6 - 5 * p + r(-1, 1)), 0, 10), fatigue: clamp(Math.round(7 - 4 * p + r(-1, 1)), 0, 10),
-        stress: p < 0.4 ? ri(2, 4) : ri(1, 3), bloating: p < 0.4 ? ri(1, 2) : ri(0, 1), nausea: p < 0.3 && rnd() < 0.4 ? 1 : 0, mood: p < 0.4 ? ri(2, 3) : ri(3, 4), tenesmus: p < 0.35 && rnd() < 0.6,
+        stress: p < 0.4 ? ri(2, 4) : ri(1, 3), bloating: p < 0.4 ? ri(1, 2) : ri(0, 1), nausea: p < 0.3 && rnd() < 0.4 ? 1 : 0, mood: p < 0.4 ? ri(2, 3) : ri(3, 4),
         extra: p < 0.3 && rnd() < 0.5 ? ['joints'] : [], weight: wd === 1 ? Math.round((64.6 + p * 0.9 + r(-0.2, 0.2)) * 10) / 10 : null, note: '',
-      };
+      });
     }
     days[date] = d;
   }
@@ -712,14 +735,15 @@ function gauge(score) {
 function activityPanel(date) {
   const day = getDay(date), sc = dayScore(day);
   if (!sc) return `<section class="activity"><span class="eyebrow">Estimated activity</span><p class="act-empty">Log bathroom trips and an evening check-in to see an estimated ${scoreDef().short} activity score for this day.</p>${gauge(null)}</section>`;
-  const b = band(sc.score), bm = day.bm || [], ci = day.checkin;
+  const b = band(sc.score), bm = day.bm || [], ci = dayCheckin(day), urges = (day.urges || []).length;
   const night = bm.filter(x => x.night).length;
   const maxBlood = bm.reduce((m, x) => Math.max(m, x.blood || 0), 0);
   const maxUrg = bm.reduce((m, x) => Math.max(m, x.urgency || 0), 0);
   const facts = [`<span class="fact">${bm.length} ${plural(bm.length, 'trip', 'trips')}${night ? ` · ${night} at night` : ''}</span>`];
   facts.push(maxBlood ? `<span class="fact blood">Blood: ${BLOOD[maxBlood].toLowerCase()}</span>` : bm.length ? '<span class="fact">No blood</span>' : '');
   if (maxUrg) facts.push(`<span class="fact warn">${URGENCY[maxUrg]}</span>`);
-  facts.push(ci ? `<span class="fact">Feeling: ${WELLBEING[ci.wellbeing ?? 0].toLowerCase()}</span>` : '');
+  if (urges) facts.push(`<span class="fact">${urges} ${plural(urges, 'urge', 'urges')}, nothing came</span>`);
+  facts.push(ci ? `<span class="fact">Feeling: ${WELLBEING[ci.wellbeing ?? 0].toLowerCase()}${ci.count > 1 ? ` (average of ${ci.count} check-ins)` : ''}</span>` : '');
   if (ci) for (const id of ci.extra || []) { const e = EXTRA.find(x => x.id === id); if (e) facts.push(`<span class="fact">${e.label}</span>`); }
   return `<section class="activity" aria-label="Estimated ${scoreDef().short} ${sc.score}, ${b.label}">
     <div class="act-top">
@@ -738,12 +762,12 @@ function quickGrid(date) {
   const exMins = (day.exercise || []).reduce((a, x) => a + (x.mins || 0), 0);
   const n = (list, word) => (list.length ? `${list.length} ${isToday ? 'today' : 'logged'}` : word);
   const items = [
-    ['bm', 'Bathroom', n(day.bm, 'Log a trip')],
+    ['bm', 'Bathroom', n(day.bm, 'Log a trip') + ((day.urges || []).length ? ` · ${(day.urges || []).length} ${plural((day.urges || []).length, 'urge', 'urges')}` : '')],
     ['meal', 'Meal', n(day.meals, 'Log food or drink')],
     ['dose', 'Medicine', slots.length ? `${taken} of ${slots.length} taken` : 'Log a dose'],
     ['sleep', 'Sleep', sc ? `${fmtDur(sc.total)} asleep` : pend && pend.date === date ? 'In bed' : isToday ? 'Log last night' : 'Log that night'],
     ['ex', 'Exercise', exMins ? `${exMins} min` : 'Log activity'],
-    ['checkin', 'Check-in', day.checkin ? 'Done' : isToday ? 'How do you feel?' : 'Not done'],
+    ['checkin', 'Check-in', (day.checkins || []).length ? `${day.checkins.length} ${isToday ? 'today' : 'logged'} · add another` : isToday ? 'How do you feel?' : 'Not done'],
   ];
   return `<div class="quick" role="group" aria-label="Log something">${items.map(([k, label, sub]) =>
     `<button class="qbtn k-${k}" data-act="new" data-kind="${k}">${icon(k)}<strong>${label}</strong><small>${esc(sub)}</small></button>`).join('')}</div>`;
@@ -774,9 +798,9 @@ function sleepCard(date) {
   } else if (c) {
     const chips = [];
     if (sl.quality) chips.push(`<span class="fact">Quality ${sl.quality}/5</span>`);
-    if (sl.rested) chips.push(`<span class="fact">Rested ${sl.rested}/5</span>`);
+    if (morningScore(sl) != null) chips.push(`<span class="fact">Woke up feeling ${morningScore(sl)}/10</span>`);
     if (c.eff != null) chips.push(`<span class="fact">${c.eff}% of time in bed asleep</span>`);
-    for (const f of (sl.factors || []).concat(autoFactors(date))) chips.push(`<span class="fact">${esc(f)}</span>`);
+    for (const f of (sl.factors || []).map(sleepFactorLabel).concat(autoFactors(date))) chips.push(`<span class="fact">${esc(f)}</span>`);
     body = `<div class="sleep-stats">
       <div><span class="lbl">Asleep</span><b>${fmtDur(c.total)}</b></div>
       <div><span class="lbl">In bed</span><b class="mono">${fmtTime(sl.inBed)}–${fmtTime(sl.up || sl.wake)}</b></div>
@@ -876,9 +900,11 @@ function timeline(date) {
   }
   for (const x of day.exercise || []) push(x.t, 'ex', `${esc(x.type)} · ${x.mins || 0} min`, esc([x.intensity, x.steps ? `${fmtNum(x.steps)} steps` : '', x.symptoms && x.symptoms !== 'None' ? x.symptoms.toLowerCase() : ''].filter(Boolean).join(' · ')), `data-act="edit" data-kind="ex" data-id="${x.id}"`, rmBtn('exercise', x.id, 'exercise'));
   for (const x of day.naps || []) push(x.t, 'nap', `Nap · ${x.mins} min`, esc(x.note || ''), `data-act="edit" data-kind="nap" data-id="${x.id}"`, rmBtn('naps', x.id, 'nap'));
-  if (day.checkin) {
-    const ci = day.checkin;
-    push(ci.t || '21:00', 'checkin', 'Check-in', esc([WELLBEING[ci.wellbeing ?? 0], `pain ${ci.pain ?? 0}/10`, `fatigue ${ci.fatigue ?? 0}/10`, ci.bloating ? `${SEVERITY[ci.bloating].toLowerCase()} bloating` : '', ci.nausea ? `${SEVERITY[ci.nausea].toLowerCase()} nausea` : ''].filter(Boolean).join(' · ')), `data-act="edit" data-kind="checkin" data-id="ci"`, 'data-act="rmCheckin" aria-label="Delete this check-in" title="Delete"');
+  for (const ci of day.checkins || []) {
+    push(ci.t || '21:00', 'checkin', 'Check-in', esc([WELLBEING[ci.wellbeing ?? 0], `pain ${ci.pain ?? 0}/10`, `fatigue ${ci.fatigue ?? 0}/10`, ci.bloating ? `${SEVERITY[ci.bloating].toLowerCase()} bloating` : '', ci.nausea ? `${SEVERITY[ci.nausea].toLowerCase()} nausea` : '', ci.tenesmus ? 'felt the need, nothing came' : ''].filter(Boolean).join(' · ')), `data-act="edit" data-kind="checkin" data-id="${ci.id}"`, rmBtn('checkins', ci.id, 'check-in'));
+  }
+  for (const u of day.urges || []) {
+    push(u.t, 'bm', 'Urge · nothing came', esc([u.urgency ? URGENCY[u.urgency].toLowerCase() : '', u.pain ? `pain ${u.pain}/10` : '', u.night ? 'at night' : '', u.note].filter(Boolean).join(' · ')), `data-act="edit" data-kind="urge" data-id="${u.id}"`, rmBtn('urges', u.id, 'urge'));
   }
   const pd = day.period;
   if (pd && (pd.flow || (pd.symptoms || []).length)) items.push({ m: -1, t: '', kind: 'period', title: pd.flow ? `Period · ${FLOW[pd.flow].toLowerCase()}` : 'Period symptoms', sub: esc((pd.symptoms || []).join(', ')), attrs: 'data-act="edit" data-kind="period" data-id="p"', rm: 'data-act="rmPeriod" aria-label="Delete this period entry" title="Delete"' });
@@ -939,7 +965,7 @@ function monthStats(ym) {
     const day = D().days[date];
     if (day) {
       const bm = day.bm || [];
-      if (bm.length || day.checkin || day.sleep || (day.meals || []).length || (day.doses || []).length) logged++;
+      if (bm.length || (day.checkins || []).length || day.sleep || (day.meals || []).length || (day.doses || []).length) logged++;
       if (bm.length) { bmDays++; trips += bm.length; nightTotal += bm.filter(b => b.night).length; if (bm.some(b => b.blood)) bloodDays++; }
       const c = sleepCalc(date, day.sleep);
       if (c && c.total > 0) { sleepN++; sleepSum += c.total; }
@@ -980,7 +1006,7 @@ function aboutScore() {
     ? `For Crohn's disease the score estimates the <strong>Harvey-Bradshaw Index (HBI)</strong>, a symptom score many GI teams use. Under 5 usually means quiet disease, 5–7 mild, 8–16 moderate and 17 or more severe.`
     : `For ulcerative colitis the score estimates the <strong>Simple Clinical Colitis Activity Index (SCCAI)</strong>, a 0–19 scale many GI teams use. 2 or less usually means quiet disease.`;
   return `<details class="about" data-key="about" ${S.open.about ? 'open' : ''}><summary>How the activity score works</summary>
-  <p style="margin-top:10px">${intro} It's worked out from your bathroom log and evening check-in. Use it to spot trends and to share with your doctor. It isn't a diagnosis. You can change your condition in More.</p>
+  <p style="margin-top:10px">${intro} It's worked out from your bathroom log and check-ins. With several check-ins in a day, it uses their average. Urges where nothing came aren't counted as trips. Use it to spot trends and to share with your doctor. It isn't a diagnosis. You can change your condition in More.</p>
   <div class="tbl-wrap"><table><thead><tr><th>Item</th><th>Points</th></tr></thead><tbody>
     ${rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('')}
   </tbody></table></div></details>`;
@@ -1152,13 +1178,13 @@ function trendRows(n, end = today()) {
   for (let i = n - 1; i >= 0; i--) {
     const date = addDays(end, -i), day = D().days[date];
     const sc = day ? dayScore(day) : null, bm = (day && day.bm) || [];
-    const c = day ? sleepCalc(date, day.sleep) : null, mac = day ? mealMacros(day) : {}, ci = (day && day.checkin) || {};
+    const c = day ? sleepCalc(date, day.sleep) : null, mac = day ? mealMacros(day) : {}, ci = dayCheckin(day) || {};
     rows.push(Object.assign({
       date, day, score: sc ? sc.score : null, trips: bm.length, blood: bm.filter(b => b.blood).length,
       sleep: c && c.total > 0 ? c.total / 60 : null, carbs: mac.carbs ?? null, protein: mac.protein ?? null, fat: mac.fat ?? null, fiber: mac.fiber ?? null,
       tags: new Set(((day && day.meals) || []).flatMap(x => x.tags || [])), flow: (day && day.period && day.period.flow) || 0,
-      drinks: ((day && day.drinks) || []).length, cigs: ((day && day.cigs) || []).length, bloating: ci.bloating || 0, nausea: ci.nausea || 0,
-      sl: c && c.total > 0 ? { total: c.total, latency: c.latency, quality: day.sleep.quality ?? null, rested: day.sleep.rested ?? null, wakeOther: (day.sleep.pain || 0) + (day.sleep.other || 0), bed: toMin(day.sleep.inBed) >= 900 ? toMin(day.sleep.inBed) - 1440 : toMin(day.sleep.inBed) } : null,
+      drinks: ((day && day.drinks) || []).length, cigs: ((day && day.cigs) || []).length, bloating: ci.bloating || 0, nausea: ci.nausea || 0, urges: ((day && day.urges) || []).length,
+      sl: c && c.total > 0 ? { total: c.total, latency: c.latency, quality: day.sleep.quality ?? null, morning: morningScore(day.sleep), wakeOther: (day.sleep.pain || 0) + (day.sleep.other || 0), bed: toMin(day.sleep.inBed) >= 900 ? toMin(day.sleep.inBed) - 1440 : toMin(day.sleep.inBed) } : null,
     }, timingFeatures(date, day)));
   }
   return rows;
@@ -1313,7 +1339,7 @@ function sleepTable(rows) {
     { label: 'Took 30+ minutes to fall asleep', has: r => r.sl.latency >= 30, applies: has },
     { label: 'Woke from pain or other reasons (not the bathroom)', has: r => r.sl.wakeOther >= 1, applies: has },
     { label: 'Poor sleep quality (1–2 out of 5)', has: r => r.sl.quality <= 2, applies: r => has(r) && r.sl.quality != null },
-    { label: 'Woke up not rested (1–2 out of 5)', has: r => r.sl.rested <= 2, applies: r => has(r) && r.sl.rested != null },
+    { label: 'Woke up drowsy (3 or less out of 10)', has: r => r.sl.morning <= 3, applies: r => has(r) && r.sl.morning != null },
     { label: 'Went to bed after midnight', has: r => r.sl.bed >= 0, applies: has },
     { label: 'Bedtime an hour or more off your usual', has: r => Math.abs(r.sl.bed - usual) >= 60, applies: r => has(r) && usual != null },
   ];
@@ -1321,7 +1347,7 @@ function sleepTable(rows) {
   return intro + patternBlock('tblSleep', rows, tests, {
     heading: 'The night before', sameDay: true,
     emptyMsg: 'Keep logging your nights and symptoms for a couple of weeks. This then compares your score after different kinds of nights.',
-    noneMsg: 'No clear sleep patterns yet. Keep logging your nights, including quality and how rested you feel.',
+    noneMsg: 'No clear sleep patterns yet. Keep logging your nights, including quality and how you feel on waking.',
     note: 'Each night is compared with your score the day after it. Bathroom trips at night both break up sleep and add to the score, so a rough night and a higher score can go together for that reason alone. That is why the wake-up row leaves bathroom trips out.',
   });
 }
@@ -1351,8 +1377,8 @@ function dailyTable(rows) {
   const r = rows.slice().reverse().filter(x => x.score != null || x.trips || x.sleep != null || x.drinks || x.cigs || MACROS.some(([k]) => x[k] != null));
   if (!r.length) return '<p class="empty" style="margin-top:8px">Nothing logged in this period.</p>';
   const v = x => (x == null ? '–' : fmtNum(round1(x)));
-  return `<div class="tbl-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>Day</th><th>${scoreDef().short}</th><th>Trips</th><th>With blood</th><th>Sleep</th><th>Carbs</th><th>Protein</th><th>Fat</th><th>Fibre</th><th>Bloating</th><th>Nausea</th>${D().settings.showAlcohol !== false ? '<th>Drinks</th>' : ''}${D().settings.showSmoking !== false ? '<th>Cigarettes</th>' : ''}${D().settings.trackCycle ? '<th>Period</th>' : ''}</tr></thead><tbody>
-    ${r.map(x => `<tr><td>${fmtDay(x.date)}</td><td>${v(x.score)}</td><td>${x.trips}</td><td>${x.blood}</td><td>${x.sleep != null ? fmtDur(x.sleep * 60) : '–'}</td><td>${v(x.carbs)}</td><td>${v(x.protein)}</td><td>${v(x.fat)}</td><td>${v(x.fiber)}</td><td>${x.bloating ? SEVERITY[x.bloating] : '–'}</td><td>${x.nausea ? SEVERITY[x.nausea] : '–'}</td>${D().settings.showAlcohol !== false ? `<td>${x.drinks}</td>` : ''}${D().settings.showSmoking !== false ? `<td>${x.cigs}</td>` : ''}${D().settings.trackCycle ? `<td>${x.flow ? FLOW[x.flow] : '–'}</td>` : ''}</tr>`).join('')}
+  return `<div class="tbl-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>Day</th><th>${scoreDef().short}</th><th>Trips</th><th>With blood</th><th>Sleep</th><th>Carbs</th><th>Protein</th><th>Fat</th><th>Fibre</th><th>Urges</th><th>Bloating</th><th>Nausea</th>${D().settings.showAlcohol !== false ? '<th>Drinks</th>' : ''}${D().settings.showSmoking !== false ? '<th>Cigarettes</th>' : ''}${D().settings.trackCycle ? '<th>Period</th>' : ''}</tr></thead><tbody>
+    ${r.map(x => `<tr><td>${fmtDay(x.date)}</td><td>${v(x.score)}</td><td>${x.trips}</td><td>${x.blood}</td><td>${x.sleep != null ? fmtDur(x.sleep * 60) : '–'}</td><td>${v(x.carbs)}</td><td>${v(x.protein)}</td><td>${v(x.fat)}</td><td>${v(x.fiber)}</td><td>${x.urges || '–'}</td><td>${Math.round(x.bloating) ? SEVERITY[Math.round(x.bloating)] : '–'}</td><td>${Math.round(x.nausea) ? SEVERITY[Math.round(x.nausea)] : '–'}</td>${D().settings.showAlcohol !== false ? `<td>${x.drinks}</td>` : ''}${D().settings.showSmoking !== false ? `<td>${x.cigs}</td>` : ''}${D().settings.trackCycle ? `<td>${x.flow ? FLOW[x.flow] : '–'}</td>` : ''}</tr>`).join('')}
   </tbody></table></div>`;
 }
 
@@ -1529,6 +1555,24 @@ function chips(name, labels, selected = [], values) {
 function range(name, min, max, value) {
   return `<div class="range"><input type="range" name="${name}" id="${fid(name)}" min="${min}" max="${max}" step="1" value="${value ?? min}" data-out="o-${name}"><output id="o-${name}">${value ?? min}</output></div>`;
 }
+// A 1–10 (or 0–10) slider with no value until it's moved. The value is carried by a hidden input.
+function optSlider(name, label, value, left, right, min = 1, max = 10) {
+  const set = value != null && value !== '';
+  return `<div class="field oslider ${set ? '' : 'unset'}" data-oslider="${name}">
+    <div class="rate-head"><label class="lbl" for="f-${name}">${label} <span class="oval">${set ? value : 'Not rated'}</span></label><button type="button" data-act="clearSlider" data-k="${name}">Clear</button></div>
+    <input type="range" id="f-${name}" min="${min}" max="${max}" step="1" value="${set ? value : Math.round((min + max) / 2)}" data-oslider-input="${name}">
+    <input type="hidden" name="${name}" value="${set ? value : ''}">
+    <div class="ends"><span>${left}</span><span>${right}</span></div></div>`;
+}
+function setOptSlider(form, name, value) {
+  const box = form.querySelector(`[data-oslider="${name}"]`);
+  if (!box) return;
+  const range = box.querySelector('input[type=range]'), hidden = box.querySelector('input[type=hidden]'), set = value != null && value !== '';
+  if (set) range.value = value; else range.value = Math.round((Number(range.min) + Number(range.max)) / 2);
+  hidden.value = set ? value : '';
+  box.classList.toggle('unset', !set);
+  box.querySelector('.oval').textContent = set ? value : 'Not rated';
+}
 function scale5(name, value, low, high) {
   return `${seg(name, ['1', '2', '3', '4', '5'], value, { values: [1, 2, 3, 4, 5] })}<span class="hint">1 = ${low}, 5 = ${high}</span>`;
 }
@@ -1543,19 +1587,22 @@ function isNightTime(hm, date) {
   if (pend && date === today() && pend.date === date) return true;
   return m != null && (m >= 23 * 60 || m < 6 * 60);
 }
-function sheetBm(date, entry) {
+// "Felt the need, but nothing came" is saved in `urges`, never in `bm`, so trip counts and the score stay standard.
+function sheetBm(date, entry, isUrge = false) {
   const prev = (getDay(date).bm || []).slice(-1)[0];
   const t = entry ? entry.t : defTime(date);
-  const e = entry || { id: uid(), t, bristol: prev ? prev.bristol : 4, blood: 0, urgency: 0, pain: 0, night: isNightTime(t, date), note: '' };
+  const e = Object.assign({ bristol: prev ? prev.bristol : 4, blood: 0 }, entry || { id: uid(), t, urgency: 0, pain: 0, night: isNightTime(t, date), note: '' });
   const bristol = `<div class="bristol">${[1, 2, 3, 4, 5, 6, 7].map(n => `<label><input type="radio" name="bristol" value="${n}" ${n === e.bristol ? 'checked' : ''}><span><b>${n}</b><small>${BRISTOL[n]}</small></span></label>`).join('')}</div>`;
   openSheet({
-    title: entry ? 'Edit bathroom trip' : 'Bathroom trip',
+    title: entry ? (isUrge ? 'Edit urge' : 'Edit bathroom trip') : 'Bathroom trip',
     body: `<div class="row2">${field('Time', timeInput('t', e.t))}<label class="toggle"><input type="checkbox" name="night" id="f-night" ${e.night ? 'checked' : ''}><span>Woke me up at night</span></label></div>
-      ${group('Stool type <span class="hint">Bristol scale</span>', bristol + '<span class="hint">3–4 is typical. 6–7 means loose or watery.</span>')}
-      ${group('Blood', seg('blood', BLOOD, e.blood, { cls: 'blood' }))}
+      <label class="toggle"><input type="checkbox" name="urge" id="f-urge" ${isUrge ? 'checked' : ''}><span>Felt the need, but nothing came</span></label>
+      <p class="hint" data-when="urge:on">Saved as an urge, not a bathroom trip, so it doesn't change your trip count or score.</p>
+      <div class="field" data-when="urge:">${group('Stool type <span class="hint">Bristol scale</span>', bristol + '<span class="hint">3–4 is typical. 6–7 means loose or watery.</span>')}</div>
+      <div class="field" data-when="urge:">${group('Blood', seg('blood', BLOOD, e.blood, { cls: 'blood' }))}</div>
       ${group('Urgency', seg('urgency', URGENCY, e.urgency))}
       <div class="field"><label class="lbl" for="f-pain">Pain or cramping (0–10)</label>${range('pain', 0, 10, e.pain)}</div>
-      ${hasIron() ? '<p class="sub-note">You take iron, which often turns stool dark or black. Mention any change you are unsure about to your doctor.</p>' : ''}
+      ${hasIron() ? '<p class="sub-note" data-when="urge:">You take iron, which often turns stool dark or black. Mention any change you are unsure about to your doctor.</p>' : ''}
       ${noteField(e.note)}`,
     onInput: (form, ev) => {
       if (!ev) return;
@@ -1563,10 +1610,16 @@ function sheetBm(date, entry) {
       if (ev.target.name === 't' && !form.dataset.nightTouched) form.elements.night.checked = isNightTime(ev.target.value, date);
     },
     onSave: fd => {
-      upsertEntry(date, 'bm', { id: e.id, t: fd.get('t'), bristol: Number(fd.get('bristol')) || null, blood: Number(fd.get('blood')) || 0, urgency: Number(fd.get('urgency')) || 0, pain: Number(fd.get('pain')) || 0, night: fd.get('night') === 'on', note: (fd.get('note') || '').trim() });
-      if (!entry) toast('Bathroom trip logged');
+      const urge = fd.get('urge') === 'on';
+      const x = { id: e.id, t: fd.get('t'), urgency: Number(fd.get('urgency')) || 0, pain: Number(fd.get('pain')) || 0, night: fd.get('night') === 'on', note: (fd.get('note') || '').trim() };
+      if (!urge) Object.assign(x, { bristol: Number(fd.get('bristol')) || null, blood: Number(fd.get('blood')) || 0 });
+      mutDay(date, d => {
+        d.bm = d.bm.filter(y => y.id !== e.id); d.urges = d.urges.filter(y => y.id !== e.id);
+        (urge ? d.urges : d.bm).push(x);
+      });
+      if (!entry) toast(urge ? 'Urge logged. It isn\'t counted as a trip.' : 'Bathroom trip logged');
     },
-    onDelete: entry ? () => removeEntry(date, 'bm', e.id, 'bathroom trip') : null,
+    onDelete: entry ? () => removeEntry(date, isUrge ? 'urges' : 'bm', e.id, isUrge ? 'urge' : 'bathroom trip') : null,
   });
 }
 
@@ -1575,7 +1628,7 @@ function mealTypeFor(hm) { const m = toMin(hm) ?? 720; return m < 630 ? 'Breakfa
 function sheetMeal(date, entry) {
   const t = entry ? entry.t : defTime(date);
   const e = entry || { id: uid(), t, type: mealTypeFor(t), desc: '', tags: [], portion: 'Normal', carbs: null, protein: null, fat: null, fiber: null, note: '' };
-  const rate = (k, label, hint) => `<fieldset class="field"><div class="rate-head"><legend class="lbl">${label} <span class="hint">${hint}</span></legend><button type="button" data-act="clearRate" data-k="${k}">Clear</button></div>${seg(k, ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'], e[k] ?? '', { values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], cls: 'rate' })}</fieldset>`;
+  const MEAL_SLIDERS = { carbs: ['How much of this meal was carbs?', 'Mostly carbs'], protein: ['How much of it was protein?', 'Mostly protein'], fat: ['How much of it was fat?', 'Mostly fat'], fiber: ['How much fibre was in it?', 'High in fibre'] };
   const favs = D().settings.favorites || [];
   const recent = [...new Set(Object.values(D().days).flatMap(d => (d.meals || []).map(x => x.desc)).filter(Boolean))].slice(-40);
   openSheet({
@@ -1584,10 +1637,7 @@ function sheetMeal(date, entry) {
       <div class="row2">${field('Time', timeInput('t', e.t))}${field('Portion', `<select name="portion" id="f-portion">${PORTIONS.map(p => `<option ${p === e.portion ? 'selected' : ''}>${p}</option>`).join('')}</select>`)}</div>
       ${group('Type', seg('type', MEAL_TYPES, e.type, { values: MEAL_TYPES }))}
       ${field('What did you have?', textInput('desc', e.desc, 'e.g. Rice, dal and curd', 'required list="meal-list"') + `<datalist id="meal-list">${recent.map(r => `<option value="${esc(r)}"></option>`).join('')}</datalist>`)}
-      ${rate('carbs', 'Carbs', '1 = very little, 10 = mostly carbs')}
-      ${rate('protein', 'Protein', '1 = very little, 10 = a lot')}
-      ${rate('fiber', 'Fibre', '1 = very little, 10 = lots of veg, whole grains or beans')}
-      ${rate('fat', 'Fat', '1 = very little, 10 = very rich or fried')}
+      ${MACROS.map(([k]) => optSlider(k, MEAL_SLIDERS[k][0], e[k], 'Hardly any', MEAL_SLIDERS[k][1])).join('')}
       ${group('Tags <span class="hint">used to spot triggers</span>', TAG_GROUPS.map(([g, list]) => `<div class="tag-group"><span class="sublbl">${g}</span>${chips('tags', list.map(tagLabel), e.tags || [], list)}</div>`).join('') + customTagBlock(e.tags || []))}
       ${noteField(e.note)}
       ${favs.some(f => f.desc === e.desc) ? '' : '<label class="toggle"><input type="checkbox" name="fav" id="f-fav"><span>Save to favourites</span></label>'}`,
@@ -1694,13 +1744,14 @@ function sheetNap(date, entry) {
 }
 
 /* ---------- check-in ---------- */
-function sheetCheckin(date) {
-  const cur = getDay(date).checkin;
-  const e = cur || { t: date === today() ? nowHM() : '21:00', wellbeing: 0, pain: 0, fatigue: 0, stress: 2, mood: 3, bloating: 0, nausea: 0, tenesmus: false, extra: [], weight: null, note: '' };
+function sheetCheckin(date, entry) {
+  const list = getDay(date).checkins || [];
+  const e = entry || { id: uid(), t: date === today() ? nowHM() : '21:00', wellbeing: 0, pain: 0, fatigue: 0, stress: 2, mood: 3, bloating: 0, nausea: 0, extra: [], weight: null, note: '' };
   const wu = D().settings.weightUnit || 'kg';
   openSheet({
-    title: cur ? 'Edit check-in' : 'Daily check-in',
+    title: entry ? 'Edit check-in' : list.length ? 'Another check-in' : 'Daily check-in',
     body: `${field('Time', timeInput('t', e.t))}
+      ${list.length && !entry ? `<p class="hint">You've checked in ${list.length} ${plural(list.length, 'time', 'times')} today. The day's score uses the average of your check-ins.</p>` : ''}
       ${group('Overall, how have you felt today?', seg('wellbeing', WELLBEING, e.wellbeing ?? 0))}
       <div class="field"><label class="lbl" for="f-pain">Belly pain (0–10)</label>${range('pain', 0, 10, e.pain)}</div>
       <div class="field"><label class="lbl" for="f-fatigue">Tiredness (0–10)</label>${range('fatigue', 0, 10, e.fatigue)}</div>
@@ -1708,16 +1759,16 @@ function sheetCheckin(date) {
       ${group('Nausea', seg('nausea', SEVERITY, e.nausea ?? 0))}
       ${group('Stress', scale5('stress', e.stress, 'calm', 'very stressed'))}
       ${group('Mood', scale5('mood', e.mood, 'low', 'great'))}
-      <label class="toggle"><input type="checkbox" name="tenesmus" id="f-tenesmus" ${e.tenesmus ? 'checked' : ''}><span>Felt the need to go, but nothing came</span></label>
-      ${(() => { const list = EXTRA.filter(x => !x.cd || D().settings.condition === 'cd' || (e.extra || []).includes(x.id)); return group('Anything else today?', chips('extra', list.map(x => x.label), e.extra || [], list.map(x => x.id))); })()}
+      ${(() => { const items = EXTRA.filter(x => !x.cd || D().settings.condition === 'cd' || (e.extra || []).includes(x.id)); return group('Anything else today?', chips('extra', items.map(x => x.label), e.extra || [], items.map(x => x.id))); })()}
       <div class="row2">${field(`Weight (${wu})`, numInput('weight', e.weight, 'min="0" placeholder="Optional"'))}<span></span></div>
       ${noteField(e.note)}`,
     onSave: fd => {
-      const x = { t: fd.get('t'), wellbeing: Number(fd.get('wellbeing')) || 0, pain: Number(fd.get('pain')) || 0, fatigue: Number(fd.get('fatigue')) || 0, stress: Number(fd.get('stress')) || null, mood: Number(fd.get('mood')) || null, bloating: Number(fd.get('bloating')) || 0, nausea: Number(fd.get('nausea')) || 0, tenesmus: fd.get('tenesmus') === 'on', extra: fd.getAll('extra'), weight: num(fd.get('weight')), weightUnit: wu, note: (fd.get('note') || '').trim() };
-      mutDay(date, d => { d.checkin = x; });
-      if (!cur) toast('Check-in saved');
+      const x = { id: e.id, t: fd.get('t'), wellbeing: Number(fd.get('wellbeing')) || 0, pain: Number(fd.get('pain')) || 0, fatigue: Number(fd.get('fatigue')) || 0, stress: Number(fd.get('stress')) || null, mood: Number(fd.get('mood')) || null, bloating: Number(fd.get('bloating')) || 0, nausea: Number(fd.get('nausea')) || 0, extra: fd.getAll('extra'), weight: num(fd.get('weight')), weightUnit: wu, note: (fd.get('note') || '').trim() };
+      if (e.tenesmus) x.tenesmus = true;
+      upsertEntry(date, 'checkins', x);
+      if (!entry) toast(list.length ? 'Check-in added' : 'Check-in saved');
     },
-    onDelete: cur ? () => { const old = cur; mutDay(date, d => { d.checkin = null; }); toast('Deleted check-in', 'Undo', () => mutDay(date, d => { d.checkin = old; })); } : null,
+    onDelete: entry ? () => removeEntry(date, 'checkins', e.id, 'check-in') : null,
   });
 }
 
@@ -1802,17 +1853,18 @@ function sheetDoseGroup(date, ids) {
 function sheetSleep(date, prefill) {
   const cur = getDay(date).sleep, last = lastSleep(date);
   const base = cur || Object.assign({ inBed: '23:00', asleep: '23:20', wake: '07:00', up: '07:10' }, last ? { inBed: last.inBed, asleep: last.asleep, wake: last.wake, up: last.up } : {});
-  const s = Object.assign({ quality: 3, rested: 3, pain: 0, other: 0, factors: [], note: '' }, base, prefill || {});
+  const s = Object.assign({ quality: 3, pain: 0, other: 0, factors: [], note: '' }, base, prefill || {});
   const auto = autoFactors(date);
   openSheet({
     title: `Night before ${date === today() ? 'today' : fmtDay(date)}`,
     body: `<div class="row2">${field('Got into bed', timeInput('inBed', s.inBed))}${field('Fell asleep (roughly)', timeInput('asleep', s.asleep))}${field('Woke up', timeInput('wake', s.wake))}${field('Got out of bed', timeInput('up', s.up))}</div>
       <p class="calc" data-calc></p>
       ${group('Sleep quality', scale5('quality', s.quality, 'very poor', 'great'))}
-      ${group('How rested do you feel?', scale5('rested', s.rested, 'exhausted', 'fully rested'))}
+      ${optSlider('morning', 'How do you feel after waking up?', morningScore(s), 'Drowsy, groggy', 'Calm, alert', 0, 10)}
       <div class="row2">${field('Woke from pain', numInput('pain', s.pain, 'min="0" max="20" step="1"'))}${field('Woke for other reasons', numInput('other', s.other, 'min="0" max="20" step="1"'))}</div>
       ${auto.length ? group('From your log the evening before', `<div class="info-chips">${auto.map(a => `<span class="fact">${esc(a)}</span>`).join('')}</div>`) : ''}
-      ${group('Anything else?', chips('factor', SLEEP_FACTORS, s.factors || []))}
+      ${group('Before bed', chips('factor', BEFORE_BED.map(x => x[1]), s.factors || [], BEFORE_BED.map(x => x[0])))}
+      ${group('During the night', chips('factor', DURING_NIGHT.map(x => x[1]), s.factors || [], DURING_NIGHT.map(x => x[0])))}
       ${noteField(s.note)}`,
     onInput: form => {
       const v = n => form.elements[n].value;
@@ -1822,7 +1874,7 @@ function sheetSleep(date, prefill) {
       out.textContent = `${fmtDur(c.total)} asleep · ${fmtDur(c.inBedDur)} in bed · fell asleep in ${fmtDur(c.latency)}${c.eff != null ? ` · ${c.eff}% asleep` : ''} · ${c.trips} bathroom ${plural(c.trips, 'trip', 'trips')} logged overnight`;
     },
     onSave: fd => {
-      const x = { inBed: fd.get('inBed'), asleep: fd.get('asleep') || fd.get('inBed'), wake: fd.get('wake'), up: fd.get('up') || fd.get('wake'), quality: Number(fd.get('quality')) || null, rested: Number(fd.get('rested')) || null, pain: num(fd.get('pain')) || 0, other: num(fd.get('other')) || 0, factors: fd.getAll('factor'), note: (fd.get('note') || '').trim() };
+      const x = { inBed: fd.get('inBed'), asleep: fd.get('asleep') || fd.get('inBed'), wake: fd.get('wake'), up: fd.get('up') || fd.get('wake'), quality: Number(fd.get('quality')) || null, morning: fd.get('morning') === '' || fd.get('morning') == null ? null : Number(fd.get('morning')), pain: num(fd.get('pain')) || 0, other: num(fd.get('other')) || 0, factors: fd.getAll('factor'), note: (fd.get('note') || '').trim() };
       const c = sleepCalc(date, x);
       if (!c || c.total <= 0 || c.latency < 0) { toast('Check the times: you fell asleep after getting into bed, and woke after falling asleep.'); return false; }
       mutDay(date, d => { d.sleep = x; });
@@ -2011,13 +2063,16 @@ async function exportCsv() {
   const add = (...r) => rows.push(r);
   for (const d of all.days) {
     const date = d.date;
-    if (d.sleep) { const c = sleepCalc(date, d.sleep); add(date, d.sleep.wake, 'Sleep', 'Night', c ? fmtDur(c.total) : '', `In bed ${d.sleep.inBed}; asleep ${d.sleep.asleep}; woke ${d.sleep.wake}; up ${d.sleep.up}; quality ${d.sleep.quality ?? ''}/5; rested ${d.sleep.rested ?? ''}/5; bathroom trips ${c ? c.trips : ''}; woke from pain ${d.sleep.pain || 0}; other ${d.sleep.other || 0}; ${(d.sleep.factors || []).join(', ')}`, d.sleep.note); }
+    if (d.sleep) { const c = sleepCalc(date, d.sleep); add(date, d.sleep.wake, 'Sleep', 'Night', c ? fmtDur(c.total) : '', `In bed ${d.sleep.inBed}; asleep ${d.sleep.asleep}; woke ${d.sleep.wake}; up ${d.sleep.up}; quality ${d.sleep.quality ?? ''}/5; woke up feeling ${morningScore(d.sleep) ?? ''}/10; bathroom trips ${c ? c.trips : ''}; woke from pain ${d.sleep.pain || 0}; other ${d.sleep.other || 0}; ${(d.sleep.factors || []).map(sleepFactorLabel).join(', ')}`, d.sleep.note); }
     for (const x of d.naps || []) add(date, x.t, 'Nap', 'Nap', `${x.mins} min`, '', x.note);
     for (const b of d.bm || []) add(date, b.t, 'Bathroom', `Bristol type ${b.bristol ?? ''}`, '', `Blood: ${BLOOD[b.blood || 0]}; urgency: ${URGENCY[b.urgency || 0]}; pain ${b.pain || 0}/10${b.night ? '; at night' : ''}`, b.note);
     for (const x of d.meals || []) add(date, x.t, 'Meal', x.desc, x.portion, `${x.type}; carbs ${x.carbs ?? '–'}/10; protein ${x.protein ?? '–'}/10; fat ${x.fat ?? '–'}/10; fibre ${x.fiber ?? '–'}/10; tags: ${(x.tags || []).map(tagLabel).join(', ')}`, x.note);
     for (const x of d.doses || []) { const m = meds[x.medId]; add(date, x.t, m ? KINDS[m.kind] : 'Medicine', m ? m.name : x.name, x.amount != null ? `${x.amount} ${x.unit || ''}` : '', x.status === 'taken' ? `Taken${x.slot ? ` (scheduled ${x.slot})` : ''}${x.why ? `; for: ${x.why}` : ''}${x.site ? `; site: ${x.site}` : ''}` : `Skipped: ${x.reason || ''}`, x.note); }
     for (const x of d.exercise || []) add(date, x.t, 'Exercise', x.type, `${x.mins} min`, `${x.intensity}; steps ${x.steps ?? ''}; energy ${x.before ?? ''}→${x.after ?? ''}; symptoms: ${x.symptoms}`, x.note);
-    if (d.checkin) { const c = d.checkin, sc = dayScore(d); add(date, c.t, 'Check-in', WELLBEING[c.wellbeing ?? 0], sc ? `${scoreDef().short} ${sc.score}` : '', `Belly pain ${c.pain}/10; tiredness ${c.fatigue}/10; stress ${c.stress ?? ''}/5; mood ${c.mood ?? ''}/5; bloating ${SEVERITY[c.bloating || 0].toLowerCase()}; nausea ${SEVERITY[c.nausea || 0].toLowerCase()}${c.tenesmus ? '; tenesmus' : ''}; ${(c.extra || []).map(id => (EXTRA.find(e => e.id === id) || {}).label).join(', ')}${c.weight ? `; weight ${c.weight} ${c.weightUnit || ''}` : ''}`, c.note); }
+    const dsc = dayScore(d);
+    if (dsc) add(date, '', 'Activity score', scoreDef().short, String(dsc.score), dsc.partial ? 'No check-in that day' : '', '');
+    for (const c of d.checkins || []) add(date, c.t, 'Check-in', WELLBEING[c.wellbeing ?? 0], '', `Belly pain ${c.pain}/10; tiredness ${c.fatigue}/10; stress ${c.stress ?? ''}/5; mood ${c.mood ?? ''}/5; bloating ${SEVERITY[c.bloating || 0].toLowerCase()}; nausea ${SEVERITY[c.nausea || 0].toLowerCase()}${c.tenesmus ? '; felt the need, nothing came' : ''}; ${(c.extra || []).map(id => (EXTRA.find(e => e.id === id) || {}).label).join(', ')}${c.weight ? `; weight ${c.weight} ${c.weightUnit || ''}` : ''}`, c.note);
+    for (const u of d.urges || []) add(date, u.t, 'Urge (nothing came)', '', '', `Urgency: ${URGENCY[u.urgency || 0]}; pain ${u.pain || 0}/10${u.night ? '; at night' : ''}`, u.note);
     if (d.period) add(date, '', 'Period', FLOW[d.period.flow || 0], '', (d.period.symptoms || []).join(', '), d.period.note);
     if (d.water) add(date, '', 'Water', 'Glasses', String(d.water), '', '');
     if ((d.drinks || []).length) add(date, '', 'Alcohol', 'Drinks', String(d.drinks.length), `At ${d.drinks.join(', ')}`, '');
@@ -2028,14 +2083,14 @@ async function exportCsv() {
   if (res === 'downloaded') toast('Spreadsheet saved to your Downloads folder');
 }
 function mergeDay(a, b) {
-  const out = Object.assign(blankDay(b.date), clone(a || {}));
-  for (const k of ['bm', 'meals', 'doses', 'exercise', 'naps']) {
+  b = normDay(clone(b));
+  const out = normDay(Object.assign(blankDay(b.date), clone(a || {})));
+  for (const k of ['bm', 'urges', 'meals', 'doses', 'exercise', 'naps', 'checkins']) {
     const map = new Map((out[k] || []).map(x => [x.id, x]));
     for (const x of b[k] || []) map.set(x.id, x);
     out[k] = [...map.values()];
   }
   out.sleep = out.sleep || b.sleep || null;
-  out.checkin = out.checkin || b.checkin || null;
   out.period = out.period || b.period || null;
   for (const k of ['drinks', 'cigs']) out[k] = (b[k] || []).length > (out[k] || []).length ? b[k] : out[k] || [];
   out.water = Math.max(out.water || 0, b.water || 0);
@@ -2097,7 +2152,8 @@ const A = {
     else if (k === 'meal') sheetMeal(d, findEntry(d, 'meals', id));
     else if (k === 'ex') sheetEx(d, findEntry(d, 'exercise', id));
     else if (k === 'nap') sheetNap(d, findEntry(d, 'naps', id));
-    else if (k === 'checkin') sheetCheckin(d);
+    else if (k === 'checkin') { const c = findEntry(d, 'checkins', id); if (c) sheetCheckin(d, c); }
+    else if (k === 'urge') { const u = findEntry(d, 'urges', id); if (u) sheetBm(d, u, true); }
     else if (k === 'period') sheetPeriod(d);
   },
   editSleep(el) { sheetSleep(el.dataset.date || S.date); },
@@ -2154,7 +2210,7 @@ const A = {
     form.elements.desc.value = f.desc;
     for (const c of form.querySelectorAll('input[name=tags]')) c.checked = (f.tags || []).includes(c.value);
     if (f.type) for (const r of form.querySelectorAll('input[name=type]')) r.checked = r.value === f.type;
-    for (const [k] of MACROS) for (const r of form.querySelectorAll(`input[name="${k}"]`)) r.checked = Number(r.value) === f[k];
+    for (const [k] of MACROS) setOptSlider(form, k, f[k]);
     const fav = form.querySelector('#f-fav'); if (fav) fav.closest('label').hidden = true;
   },
   rmFav(el) {
@@ -2164,9 +2220,9 @@ const A = {
     saveSettings(); render();
   },
   rmDose(el) { removeEntry(S.date, 'doses', el.dataset.id, 'dose log'); },
-  rmEntry(el) { removeEntry(S.date, el.dataset.list, el.dataset.id, { bm: 'bathroom trip', meals: 'meal', exercise: 'exercise', naps: 'nap' }[el.dataset.list]); },
+  rmEntry(el) { removeEntry(S.date, el.dataset.list, el.dataset.id, { bm: 'bathroom trip', urges: 'urge', meals: 'meal', exercise: 'exercise', naps: 'nap', checkins: 'check-in' }[el.dataset.list]); },
   rmSleep(el) { const date = el.dataset.date, old = getDay(date).sleep; if (!old) return; mutDay(date, d => { d.sleep = null; }); toast('Deleted night', 'Undo', () => mutDay(date, d => { d.sleep = old; })); },
-  rmCheckin() { const date = S.date, old = getDay(date).checkin; if (!old) return; mutDay(date, d => { d.checkin = null; }); toast('Deleted check-in', 'Undo', () => mutDay(date, d => { d.checkin = old; })); },
+
   rmPeriod() { const date = S.date, old = getDay(date).period; if (!old) return; mutDay(date, d => { d.period = null; }); toast('Deleted period entry', 'Undo', () => mutDay(date, d => { d.period = old; })); },
   addTag(el) { addCustomTag(el.closest('form')); },
   rmTag(el) { const st = D().settings; st.customTags = (st.customTags || []).filter(t => t !== el.dataset.tag); saveSettings(); render(); },
@@ -2213,7 +2269,7 @@ const A = {
     }
     await Store.clearAll(); SAMPLE = null; S.tab = 'today'; S.date = today(); render(); toast('All data on this device was deleted');
   },
-  clearRate(el) { for (const r of el.closest('form').querySelectorAll(`input[name="${el.dataset.k}"]`)) r.checked = false; },
+  clearSlider(el) { setOptSlider(el.closest('form'), el.dataset.k, null); },
   exitSample() { exitSample(); },
   exportJson() { exportJson(); },
   applyUpdate() { if (waitingWorker) waitingWorker.postMessage('skipWaiting'); },
@@ -2226,8 +2282,18 @@ document.addEventListener('click', e => {
   const fn = A[el.dataset.act];
   if (fn) { e.preventDefault(); fn(el, e); }
 });
+// Sliders that start "Not rated" count as soon as they're touched, even if left in the middle.
+function markSlider(t) {
+  const box = t.closest('[data-oslider]');
+  if (!box) return;
+  box.querySelector('input[type=hidden]').value = t.value;
+  box.classList.remove('unset');
+  box.querySelector('.oval').textContent = t.value;
+}
+document.addEventListener('click', e => { if (e.target.matches && e.target.matches('[data-oslider-input]')) markSlider(e.target); });
 document.addEventListener('input', e => {
   const t = e.target;
+  if (t.dataset && t.dataset.osliderInput) markSlider(t);
   if (t.type === 'range' && t.dataset.out) { const o = document.getElementById(t.dataset.out); if (o) o.textContent = t.value; }
 });
 document.addEventListener('change', e => {

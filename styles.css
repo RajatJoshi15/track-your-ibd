@@ -476,3 +476,10 @@ body.onboarding .app { grid-template-columns: minmax(0, 1fr); }
 .impact-axis { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--muted); }
 details.more-table { margin-top: 10px; }
 details.more-table summary { cursor: pointer; font-size: 13.5px; font-weight: 600; color: var(--accent); }
+
+/* sliders that start as "Not rated" */
+.oslider input[type="range"] { width: 100%; accent-color: var(--accent); margin: 2px 0 0; }
+.oslider.unset input[type="range"] { opacity: .45; }
+.oslider .oval { font-weight: 700; color: var(--ink); margin-left: 4px; font-variant-numeric: tabular-nums; }
+.oslider.unset .oval { font-weight: 400; color: var(--muted); }
+.oslider .ends { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); }

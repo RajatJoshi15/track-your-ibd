@@ -1,6 +1,6 @@
 // Offline support. Change VERSION whenever you upload a new version of the app,
 // so everyone's installed copy picks up the new files.
-const VERSION = 'track-your-ibd-2026-09-28-5';
+const VERSION = 'track-your-ibd-2026-10-01-1';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './privacy.html', './manifest.webmanifest',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png',
