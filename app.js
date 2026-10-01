@@ -36,15 +36,22 @@ const BLOOD = ['None', 'Streaks', 'Visible', 'Mostly blood'];
 const URGENCY = ['Could wait', 'Had to hurry', 'Had to go right away', 'Accident'];
 const WELLBEING = ['Very well', 'Slightly below par', 'Poor', 'Very poor', 'Terrible'];
 const EXTRA = [
-  { id: 'joints', label: 'Joint pain', sccai: true, hbi: true },
-  { id: 'eyes', label: 'Eye pain or redness', sccai: true, hbi: true },
-  { id: 'lumps', label: 'Painful red lumps on skin', sccai: true, hbi: true },
-  { id: 'sores', label: 'Skin sores or ulcers', sccai: true, hbi: true },
-  { id: 'mouth', label: 'Mouth ulcers', sccai: false, hbi: true },
-  { id: 'fissure', label: 'Anal fissure', sccai: false, hbi: true, cd: true },
-  { id: 'fistula', label: 'New fistula', sccai: false, hbi: true, cd: true },
-  { id: 'abscess', label: 'Abscess', sccai: false, hbi: true, cd: true },
+  { id: 'joints', label: 'Joint pain', sccai: true, hbi: true, grp: 'ibd' },
+  { id: 'eyes', label: 'Eye pain or redness', sccai: true, hbi: true, grp: 'ibd' },
+  { id: 'lumps', label: 'Painful red lumps on skin', sccai: true, hbi: true, grp: 'ibd' },
+  { id: 'sores', label: 'Skin sores or ulcers', sccai: true, hbi: true, grp: 'ibd' },
+  { id: 'mouth', label: 'Mouth ulcers', sccai: false, hbi: true, grp: 'ibd' },
+  { id: 'fissure', label: 'Anal fissure', sccai: false, hbi: true, cd: true, grp: 'ibd' },
+  { id: 'fistula', label: 'New fistula', sccai: false, hbi: true, cd: true, grp: 'ibd' },
+  { id: 'abscess', label: 'Abscess', sccai: false, hbi: true, cd: true, grp: 'ibd' },
+  { id: 'gas', label: 'Gas or wind', grp: 'gut' }, { id: 'reflux', label: 'Heartburn or reflux', grp: 'gut' },
+  { id: 'appetite', label: 'Loss of appetite', grp: 'gut' }, { id: 'rectal', label: 'Rectal pain or soreness', grp: 'gut' },
+  { id: 'brainfog', label: 'Brain fog', grp: 'body' }, { id: 'cramps', label: 'Muscle cramps', grp: 'body' },
+  { id: 'headache', label: 'Headache', grp: 'body' }, { id: 'dizzy', label: 'Dizziness or light-headedness', grp: 'body' },
+  { id: 'fever', label: 'Fever or chills', grp: 'body' }, { id: 'back', label: 'Back pain', grp: 'body' },
+  { id: 'anxious', label: 'Anxious', grp: 'mind' }, { id: 'low', label: 'Low or down', grp: 'mind' },
 ];
+const EXTRA_GROUPS = [['ibd', 'Linked to IBD'], ['gut', 'Gut'], ['body', 'Body'], ['mind', 'Mind']];
 const CONDITIONS = [['uc', 'Ulcerative colitis'], ['cd', "Crohn's disease"], ['ibdu', 'IBD, type not confirmed'], ['unsure', 'Not sure']];
 const MACROS = [['carbs', 'Carbs', 'c'], ['protein', 'Protein', 'p'], ['fat', 'Fat', 'f'], ['fiber', 'Fibre', 'fb']];
 // Stored tag values keep their original spelling; this is only what people see.
@@ -66,7 +73,7 @@ const INTENSITY = ['Easy', 'Moderate', 'Hard'];
 const EX_SYMPTOMS = ['None', 'Some discomfort', 'Had to stop'];
 // Stored values stay as first written (e.g. 'Screens in bed'); labels are what people see.
 const BEFORE_BED = [['Reading', 'Reading'], ['Workout', 'Workout'], ['Screens in bed', 'Screens'], ['Late caffeine', 'Late caffeine'], ['Alcohol', 'Alcohol'], ['Heavy or late meal', 'Heavy or late meal'], ['Daytime nap', 'Daytime nap'], ['Worked late', 'Worked late'], ['Stressed', 'Stressed or worried'], ['Relaxation', 'Relaxation or meditation'], ['Warm shower or bath', 'Warm shower or bath']];
-const DURING_NIGHT = [['Pain', 'Pain'], ['Noise or light', 'Noise or light'], ['Too hot or cold', 'Too hot or cold']];
+const DURING_NIGHT = [['Pain', 'Pain'], ['Bloated', 'Bloated'], ['Gas or wind', 'Gas or wind'], ['Heartburn or reflux', 'Heartburn or reflux'], ['Night sweats', 'Night sweats'], ['Noise or light', 'Noise or light'], ['Too hot or cold', 'Too hot or cold']];
 const sleepFactorLabel = v => (BEFORE_BED.concat(DURING_NIGHT).find(x => x[0] === v) || [v, v])[1];
 const KINDS = { medicine: 'Medicine', vitamin: 'Vitamin', supplement: 'Supplement' };
 const KIND_ORDER = { medicine: 0, vitamin: 1, supplement: 2 };
@@ -252,7 +259,8 @@ function dayCheckin(day) {
   if (!list.length) return null;
   const avg = k => { const v = list.map(c => c[k]).filter(x => typeof x === 'number'); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
   const w = list.filter(c => c.weight != null).pop(), wb = avg('wellbeing');
-  return { count: list.length, wellbeing: wb == null ? null : Math.round(wb), pain: avg('pain'), fatigue: avg('fatigue'), bloating: avg('bloating'), nausea: avg('nausea'), stress: avg('stress'), mood: avg('mood'), extra: [...new Set(list.flatMap(c => c.extra || []))], tenesmus: list.some(c => c.tenesmus), weight: w ? w.weight : null };
+  const avgOf = f => { const v = list.map(f).filter(x => typeof x === 'number'); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  return { count: list.length, wellbeing: wb == null ? null : Math.round(wb), pain: avg('pain'), fatigue: avg('fatigue'), bloating: avg('bloating'), nausea: avg('nausea'), stress: avgOf(stressOf), mood: avgOf(moodOf), extra: [...new Set(list.flatMap(c => c.extra || []))], tenesmus: list.some(c => c.tenesmus), weight: w ? w.weight : null };
 }
 function getDay(date) { return D().days[date] || blankDay(date); }
 function mutDay(date, fn) {
@@ -514,6 +522,9 @@ function nightTrips(date, start, end) {
   return n;
 }
 // How someone felt on waking, 0 (drowsy) to 10 (calm, alert). Older nights used a 1–5 "rested" scale.
+const to10 = v5 => (v5 == null ? null : Math.round((v5 - 1) * 2.5));
+const stressOf = c => (c.stress10 != null ? c.stress10 : to10(c.stress));
+const moodOf = c => (c.mood10 != null ? c.mood10 : to10(c.mood));
 const morningScore = sl => (!sl ? null : sl.morning != null ? sl.morning : sl.rested != null ? Math.round((sl.rested - 1) * 2.5) : null);
 function sleepCalc(date, s) {
   if (!s || !s.inBed || !s.wake) return null;
@@ -613,6 +624,11 @@ function makeSample() {
     if (p > 0.3 && rnd() < 0.5) {
       const tm = ri(1080, 1110);
       if (tm < cut) d.exercise.push({ id: uid(), t: fromMin(tm), type: rnd() < 0.8 ? 'Walk' : 'Yoga', mins: ri(20, 45), intensity: rnd() < 0.7 ? 'Easy' : 'Moderate', steps: ri(2500, 5200), before: ri(2, 4), after: ri(3, 4), symptoms: 'None', note: '' });
+    }
+    const lunch = d.meals.find(x => x.type === 'Lunch');
+    if (lunch && (!isT || nowM > 960) && rnd() < 0.6) {
+      const heavy = (lunch.tags || []).some(t => ['Dairy', 'Fried or fatty', 'Spicy'].includes(t));
+      d.checkins.push({ id: uid(), t: '16:00', wellbeing: p < 0.4 ? ri(1, 3) : ri(0, 1), pain: clamp(Math.round(5 - 4 * p + (heavy ? 2 : 0) + r(-1, 1)), 0, 10), fatigue: ri(2, 6), bloating: clamp((heavy ? 2 : 0) + (p < 0.4 ? 1 : 0) + (rnd() < 0.3 ? 1 : 0) - (rnd() < 0.3 ? 1 : 0), 0, 3), nausea: heavy && rnd() < 0.3 ? 1 : 0, extra: [], weight: null, note: '' });
     }
     if (!isT || nowM > 1290) {
       const wd = parseYmd(date).getDay();
@@ -742,6 +758,7 @@ function activityPanel(date) {
   const facts = [`<span class="fact">${bm.length} ${plural(bm.length, 'trip', 'trips')}${night ? ` · ${night} at night` : ''}</span>`];
   facts.push(maxBlood ? `<span class="fact blood">Blood: ${BLOOD[maxBlood].toLowerCase()}</span>` : bm.length ? '<span class="fact">No blood</span>' : '');
   if (maxUrg) facts.push(`<span class="fact warn">${URGENCY[maxUrg]}</span>`);
+  if (bm.some(x => x.mucus)) facts.push('<span class="fact">Mucus</span>');
   if (urges) facts.push(`<span class="fact">${urges} ${plural(urges, 'urge', 'urges')}, nothing came</span>`);
   facts.push(ci ? `<span class="fact">Feeling: ${WELLBEING[ci.wellbeing ?? 0].toLowerCase()}${ci.count > 1 ? ` (average of ${ci.count} check-ins)` : ''}</span>` : '');
   if (ci) for (const id of ci.extra || []) { const e = EXTRA.find(x => x.id === id); if (e) facts.push(`<span class="fact">${e.label}</span>`); }
@@ -776,7 +793,7 @@ function waterCard(date) {
   const day = getDay(date), st = D().settings, n = day.water || 0, goal = st.waterGoal || 8, ml = st.glassMl || 250;
   const pips = Array.from({ length: Math.max(goal, n) }, (_, i) => `<i class="${i < n ? 'on' : ''}"></i>`).join('');
   const mac = mealMacros(day), rated = MACROS.some(([k]) => mac[k] != null);
-  const macHtml = rated ? `<div class="macro-row" aria-label="Average food ratings for this day">${MACROS.map(([k, label, c]) => `<div class="macro"><span class="lbl"><span>${label}</span><span class="mono">${mac[k] != null ? fmtNum(mac[k]) : '–'}/10</span></span><div class="macro-bar ${c}"><i style="width:${(mac[k] || 0) * 10}%"></i></div></div>`).join('')}</div>` : '';
+  const macHtml = rated ? `<div class="macro-row" aria-label="Average food ratings for this day">${MACROS.map(([k, label, c]) => `<div class="macro"><span class="lbl"><span>${label}</span><span>${mac[k] != null ? macroWord(k, Math.round(mac[k])) : '–'}</span></span><div class="macro-bar ${c}"><i style="width:${(mac[k] || 0) * 10}%"></i></div></div>`).join('')}</div>` : '';
   const counter = (k, ic, label, one, many) => {
     const list = day[k] || [], c = list.length, last = list[list.length - 1];
     return `<div class="water-row counter k-${k}">${icon(ic)}<div class="grow"><strong>${label}</strong> <span class="muted">${c ? `${c} ${plural(c, one, many)}${last && date === today() ? ` · last at ${fmtTime(last)}` : ''}` : 'None'}</span></div>
@@ -888,6 +905,7 @@ function timeline(date) {
   for (const b of day.bm || []) {
     const bits = [];
     if (b.blood) bits.push(`<span class="bl">Blood: ${BLOOD[b.blood].toLowerCase()}</span>`);
+    if (b.mucus) bits.push('mucus');
     if (b.urgency) bits.push(esc(URGENCY[b.urgency].toLowerCase()));
     if (b.pain) bits.push(`pain ${b.pain}/10`);
     if (b.night) bits.push('at night');
@@ -895,13 +913,13 @@ function timeline(date) {
     push(b.t, 'bm', `Bathroom${b.bristol ? ` · type ${b.bristol}` : ''}`, bits.join(' · '), `data-act="edit" data-kind="bm" data-id="${b.id}"`, rmBtn('bm', b.id, 'bathroom trip'));
   }
   for (const x of day.meals || []) {
-    const mac = MACROS.filter(([k]) => typeof x[k] === 'number').map(([k, label]) => `${label.toLowerCase()} ${x[k]}`).join(', ');
+    const mac = MACROS.filter(([k]) => typeof x[k] === 'number').map(([k, label]) => `${label.toLowerCase()}: ${macroWord(k, x[k]).toLowerCase()}`).join(', ');
     push(x.t, 'meal', `${esc(x.type || 'Meal')} · ${esc(x.desc)}`, esc([mac, (x.tags || []).map(tagLabel).join(', '), x.portion && x.portion !== 'Normal' ? x.portion.toLowerCase() + ' portion' : '', x.note].filter(Boolean).join(' · ')), `data-act="edit" data-kind="meal" data-id="${x.id}"`, rmBtn('meals', x.id, 'meal'));
   }
   for (const x of day.exercise || []) push(x.t, 'ex', `${esc(x.type)} · ${x.mins || 0} min`, esc([x.intensity, x.steps ? `${fmtNum(x.steps)} steps` : '', x.symptoms && x.symptoms !== 'None' ? x.symptoms.toLowerCase() : ''].filter(Boolean).join(' · ')), `data-act="edit" data-kind="ex" data-id="${x.id}"`, rmBtn('exercise', x.id, 'exercise'));
   for (const x of day.naps || []) push(x.t, 'nap', `Nap · ${x.mins} min`, esc(x.note || ''), `data-act="edit" data-kind="nap" data-id="${x.id}"`, rmBtn('naps', x.id, 'nap'));
   for (const ci of day.checkins || []) {
-    push(ci.t || '21:00', 'checkin', 'Check-in', esc([WELLBEING[ci.wellbeing ?? 0], `pain ${ci.pain ?? 0}/10`, `fatigue ${ci.fatigue ?? 0}/10`, ci.bloating ? `${SEVERITY[ci.bloating].toLowerCase()} bloating` : '', ci.nausea ? `${SEVERITY[ci.nausea].toLowerCase()} nausea` : '', ci.tenesmus ? 'felt the need, nothing came' : ''].filter(Boolean).join(' · ')), `data-act="edit" data-kind="checkin" data-id="${ci.id}"`, rmBtn('checkins', ci.id, 'check-in'));
+    push(ci.t || '21:00', 'checkin', 'Check-in', esc([WELLBEING[ci.wellbeing ?? 0], `pain ${ci.pain ?? 0}/10`, `fatigue ${ci.fatigue ?? 0}/10`, ci.bloating ? `${SEVERITY[ci.bloating].toLowerCase()} bloating` : '', ci.nausea ? `${SEVERITY[ci.nausea].toLowerCase()} nausea` : '', (ci.extra || []).map(id => (EXTRA.find(x => x.id === id) || {}).label).filter(Boolean).join(', ').toLowerCase(), ci.tenesmus ? 'felt the need, nothing came' : ''].filter(Boolean).join(' · ')), `data-act="edit" data-kind="checkin" data-id="${ci.id}"`, rmBtn('checkins', ci.id, 'check-in'));
   }
   for (const u of day.urges || []) {
     push(u.t, 'bm', 'Urge · nothing came', esc([u.urgency ? URGENCY[u.urgency].toLowerCase() : '', u.pain ? `pain ${u.pain}/10` : '', u.night ? 'at night' : '', u.note].filter(Boolean).join(' · ')), `data-act="edit" data-kind="urge" data-id="${u.id}"`, rmBtn('urges', u.id, 'urge'));
@@ -1183,7 +1201,7 @@ function trendRows(n, end = today()) {
       date, day, score: sc ? sc.score : null, trips: bm.length, blood: bm.filter(b => b.blood).length,
       sleep: c && c.total > 0 ? c.total / 60 : null, carbs: mac.carbs ?? null, protein: mac.protein ?? null, fat: mac.fat ?? null, fiber: mac.fiber ?? null,
       tags: new Set(((day && day.meals) || []).flatMap(x => x.tags || [])), flow: (day && day.period && day.period.flow) || 0,
-      drinks: ((day && day.drinks) || []).length, cigs: ((day && day.cigs) || []).length, bloating: ci.bloating || 0, nausea: ci.nausea || 0, urges: ((day && day.urges) || []).length,
+      night: bm.filter(b => b.night).length, drinks: ((day && day.drinks) || []).length, cigs: ((day && day.cigs) || []).length, bloating: ci.bloating || 0, nausea: ci.nausea || 0, urges: ((day && day.urges) || []).length,
       sl: c && c.total > 0 ? { total: c.total, latency: c.latency, quality: day.sleep.quality ?? null, morning: morningScore(day.sleep), wakeOther: (day.sleep.pain || 0) + (day.sleep.other || 0), bed: toMin(day.sleep.inBed) >= 900 ? toMin(day.sleep.inBed) - 1440 : toMin(day.sleep.inBed) } : null,
     }, timingFeatures(date, day)));
   }
@@ -1223,19 +1241,21 @@ function viewTrends() {
       ${tile('Doses taken', due ? `${Math.round((taken / due) * 100)}%` : '–', due ? `${taken} of ${due} scheduled` : '')}
     </div>
     ${hasAny ? '' : '<section class="card"><p class="empty">Nothing logged in this period yet. Charts fill in as you log bathroom trips, check-ins, sleep and meals.</p></section>'}
-    <section class="card"><div class="card-head"><h2>${def.short} activity score</h2><span class="muted">${esc(def.long)}, estimated</span></div><div class="chart" data-chart="score" aria-label="Chart of daily activity score"></div>
+    <section class="card"><div class="card-head"><h2>${def.short} activity score</h2><span class="muted">${esc(def.long)}, estimated</span></div>${scoreHeadline(rows)}<div class="chart" data-chart="score" aria-label="Chart of daily activity score"></div>
       <div class="chart-legend">${def.legend.map((l, i) => `<span><i class="b${i}"></i>${l}</span>`).join('')}${D().settings.trackCycle ? '<span><i class="period-swatch"></i>Period days</span>' : ''}</div>${periodCompare(rows)}</section>
     <div class="pair">
-      <section class="card"><div class="card-head"><h2>Bathroom trips</h2><span class="muted">per day</span></div><div class="chart" data-chart="trips" aria-label="Chart of bathroom trips per day"></div>
+      <section class="card"><div class="card-head"><h2>Bathroom trips</h2><span class="muted">per day</span></div>${bathroomHeadline(rows)}<div class="chart" data-chart="trips" aria-label="Chart of bathroom trips per day"></div>
         <div class="chart-legend"><span><i style="background:var(--bar-neutral)"></i>Trips</span><span><i style="background:var(--blood)"></i>With blood</span></div></section>
-      <section class="card"><div class="card-head"><h2>Sleep</h2><span class="muted">hours asleep</span></div><div class="chart" data-chart="sleep" aria-label="Chart of hours slept per night"></div>
+      <section class="card"><div class="card-head"><h2>Sleep</h2><span class="muted">hours asleep</span></div>${sleepHeadline(rows)}<div class="chart" data-chart="sleep" aria-label="Chart of hours slept per night"></div>
         <div class="chart-legend"><span><i style="background:var(--c-sleep)"></i>Hours asleep</span><span><i class="line" style="background:var(--muted)"></i>7-hour line</span></div></section>
     </div>
-    <section class="card"><div class="card-head"><h2>Carbs, protein, fat and fibre</h2><span class="muted">average meal rating, 1–10</span></div><div class="chart" data-chart="food" aria-label="Chart of daily carbs, protein, fat and fibre ratings"></div>
+    <section class="card"><div class="card-head"><h2>Carbs, protein, fat and fibre</h2><span class="muted">average meal rating, 1–10</span></div>${macroHeadline(rows)}<div class="chart" data-chart="food" aria-label="Chart of daily carbs, protein, fat and fibre ratings"></div>
       <div class="chart-legend">${MACROS.map(([, l], i) => `<span><i class="line" style="background:var(--s${i + 1})"></i>${l}</span>`).join('')}</div></section>
     <section class="card"><div class="card-head"><h2>Food, drinks and next-day symptoms</h2></div>${triggerTable(rows)}</section>
+    <section class="card"><div class="card-head"><h2>Meals and symptoms a few hours later</h2>${symptomPicker()}</div>${mealSymptomBlock()}</section>
     <section class="card"><div class="card-head"><h2>Meal and medicine timing</h2></div>${afterMealStats(rows)}${timingTable(rows)}</section>
     <section class="card"><div class="card-head"><h2>Sleep and next-day symptoms</h2></div>${sleepTable(rows)}</section>
+    <section class="card"><div class="card-head"><h2>Time of day</h2><span class="muted">when symptoms show up</span></div>${timeOfDayBlock(rows)}</section>
     <section class="card"><details data-key="dailyTable" ${S.open.dailyTable ? 'open' : ''}><summary class="section-title" style="cursor:pointer">Daily numbers</summary>${dailyTable(rows)}</details></section>
   </div>`;
 }
@@ -1245,86 +1265,126 @@ function periodCompare(rows) {
   if (on.length < 3 || off.length < 3) return '';
   return `<p class="hint" style="margin-top:8px">Average ${scoreDef().short} on period days: <strong>${fmtNum(round1(mean(on)))}</strong> · other days: <strong>${fmtNum(round1(mean(off)))}</strong></p>`;
 }
-// For each test: the average score the day after it happened vs the day after it didn't.
-// A test only compares days it applies to (e.g. meal-gap tests need 2+ meals that day).
-// sameDay compares with the row's own score (used for sleep, which is stored on the morning the night ends).
-function patternData(rows, tests, sameDay = false) {
-  const next = {};
-  rows.forEach((r, i) => { const t = sameDay ? r : rows[i + 1]; if (t && t.score != null) next[r.date] = t.score; });
-  const out = [];
+// ---------- "what goes with what": shared helpers ----------
+const median = a => { if (!a.length) return null; const s = a.slice().sort((x, y) => x - y), m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+const capFirst = t => t.charAt(0).toUpperCase() + t.slice(1);
+// How sure we are, in words. `scale` lifts small scales (0–3) to match differences on 0–10 or the score.
+function confidence(n, d, scale = 1) {
+  const a = Math.abs(d) * scale;
+  return n >= 10 && a >= 1.5 ? 'Strong pattern' : n >= 5 && a >= 0.8 ? 'Likely pattern' : 'Early hint';
+}
+// Compares a value between units where a test is true and where it isn't. Each unit is { value, ...features }.
+// A test only compares units it applies to, and needs 10+ of them with 3+ on each side.
+// "usual" is the median value; worseK/betterK count how often the value was above/below it.
+function compareUnits(units, tests) {
+  const usual = median(units.map(u => u.value)), out = [];
   let usable = 0;
   for (const t of tests) {
-    const days = rows.filter(r => next[r.date] != null && t.applies(r));
-    usable = Math.max(usable, days.length);
-    const yes = days.filter(t.has).map(r => next[r.date]), no = days.filter(r => !t.has(r)).map(r => next[r.date]);
-    if (yes.length < 3 || no.length < 3 || days.length < 10) continue;
+    const pool = units.filter(u => t.applies(u));
+    usable = Math.max(usable, pool.length);
+    const yes = pool.filter(t.has).map(u => u.value), no = pool.filter(u => !t.has(u)).map(u => u.value);
+    if (yes.length < 3 || no.length < 3 || pool.length < 10) continue;
     const a = mean(yes), c = mean(no);
-    out.push({ label: t.label, n: yes.length, a, c, d: a - c });
+    out.push({ label: t.label, say: t.say || `after ${t.label.toLowerCase()}`, noPraise: !!t.noPraise, n: yes.length, a, c, d: a - c, worseK: yes.filter(v => v > usual).length, betterK: yes.filter(v => v < usual).length });
   }
   return { usable, out: out.sort((x, y) => y.d - x.d) };
 }
+// For each test: the score the day after it happened vs the day after it didn't.
+// sameDay compares with the row's own score (used for sleep, which is stored on the morning the night ends).
+function patternData(rows, tests, sameDay = false) {
+  const units = [];
+  rows.forEach((r, i) => { const t = sameDay ? r : rows[i + 1]; if (t && t.score != null) units.push(Object.assign({}, r, { value: t.score })); });
+  return compareUnits(units, tests);
+}
 const signed = d => `${d > 0 ? '+' : d < 0 ? '−' : ''}${fmtNum(Math.abs(round1(d)))}`;
 // Colour follows the rounded value people see, so a displayed +0.5 is never grey.
-const impactClass = d => { const r = round1(d); return r >= 0.5 ? 'up' : r <= -0.5 ? 'down' : 'flat'; };
-// Diverging bars: right and red = higher (worse) next-day score, left and green = lower (better), grey = under 0.5 either way.
-function impactChart(list) {
-  const def = scoreDef(), max = Math.max(2, ...list.map(o => Math.abs(o.d)));
+const impactClass = (d, flat = 0.5) => { const r = round1(d); return r >= flat ? 'up' : r <= -flat ? 'down' : 'flat'; };
+// How a comparison is worded and drawn: next-day score, or a symptom a few hours after meals.
+function nextDayMetric() {
+  const s = scoreDef().short;
+  const often = (o, k, word, fallback) => (k * 2 > o.n ? `${word} than usual ${k} of ${o.n} times` : fallback);
+  return {
+    low: `Lower next-day ${s}`, high: `Higher next-day ${s}`, col: `Next-day ${s}`, other: 'Other days', unit: ['day', 'days'], flat: 0.5, scale: 1, minMax: 2,
+    tip: o => `${o.label}\nNext-day ${s}: ${fmtNum(round1(o.a))} after (${o.n} ${plural(o.n, 'day', 'days')})\nOther days: ${fmtNum(round1(o.c))}`,
+    worse: o => `${capFirst(o.say)}, your next day was ${often(o, o.worseK, 'rougher', 'a bit rougher on average')}.`,
+    better: o => `${capFirst(o.say)}, your next day was ${often(o, o.betterK, 'calmer', 'a bit calmer on average')}.`,
+  };
+}
+// Diverging bars: right and red = higher (worse), left and green = lower (better), grey = a small difference.
+function impactChart(list, m) {
+  const max = Math.max(m.minMax, ...list.map(o => Math.abs(o.d)));
   const rows = list.map(o => {
     const w = (Math.abs(o.d) / max) * 42, up = o.d >= 0;
-    const bar = `${up ? 'left' : 'right'}:50%;width:${w}%`, val = `${up ? 'left' : 'right'}:calc(50% + ${w}% + 6px)`;
-    const tip = `${o.label}\nNext-day ${def.short}: ${fmtNum(round1(o.a))} after (${o.n} ${plural(o.n, 'day', 'days')})\nOther days: ${fmtNum(round1(o.c))}`;
+    const bar = `${up ? 'left' : 'right'}:50%;width:${w}%`, val = `${up ? 'left' : 'right'}:calc(50% + ${w}% + 6px)`, tip = m.tip(o);
     return `<div class="impact-row" data-tip="${esc(tip)}" aria-label="${esc(tip.replace(/\n/g, '. '))}">
-      <div class="impact-label"><span>${esc(o.label)}</span><span class="n">${o.n} ${plural(o.n, 'day', 'days')}</span></div>
-      <div class="impact-track"><span class="impact-bar ${impactClass(o.d)}" style="${bar}"></span><span class="impact-val" style="${val}">${signed(o.d)}</span></div>
+      <div class="impact-label"><span>${esc(o.label)}</span><span class="n">${o.n} ${plural(o.n, m.unit[0], m.unit[1])}</span></div>
+      <div class="impact-track"><span class="impact-bar ${impactClass(o.d, m.flat)}" style="${bar}"></span><span class="impact-val" style="${val}">${signed(o.d)}</span></div>
     </div>`;
   }).join('');
   return `<div class="impact" role="list">${rows}</div>
-    <div class="impact-axis" aria-hidden="true"><span>← Lower next-day ${def.short}</span><span>Higher next-day ${def.short} →</span></div>
+    <div class="impact-axis" aria-hidden="true"><span>← ${m.low}</span><span>${m.high} →</span></div>
     <div class="chart-legend"><span><i style="background:var(--lvl-3)"></i>Worse after</span><span><i style="background:var(--lvl-0)"></i>Better after</span><span><i style="background:var(--bar-neutral)"></i>Little difference</span></div>`;
 }
-function patternBlock(key, rows, tests, o) {
-  const { usable, out } = patternData(rows, tests, o.sameDay);
-  if (usable < 10) return `<p class="empty">${o.emptyMsg}</p>`;
-  if (!out.length) return `<p class="empty">${o.noneMsg}</p>`;
-  const top = out.slice().sort((x, y) => Math.abs(y.d) - Math.abs(x.d)).slice(0, 8).sort((x, y) => y.d - x.d);
-  const def = scoreDef();
-  const table = `<div class="tbl-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>${o.heading}</th><th>Days</th><th>Next-day ${def.short}</th><th>Other days</th><th>Difference</th></tr></thead><tbody>
-    ${out.map(x => `<tr><td>${esc(x.label)}</td><td>${x.n}</td><td>${fmtNum(round1(x.a))}</td><td>${fmtNum(round1(x.c))}</td><td class="${{ up: 'delta-up', down: 'delta-down', flat: '' }[impactClass(x.d)]}">${signed(x.d)}</td></tr>`).join('')}
+// One or two plain sentences: the clearest worse pattern and the clearest better one, each with how sure we are.
+// Alcohol and smoking are never described as helping.
+function patternHeadline(out, m, none) {
+  const conf = o => `<span class="conf">${confidence(o.n, o.d, m.scale)}</span>`;
+  const worst = out.find(o => impactClass(o.d, m.flat) === 'up');
+  const best = out.slice().reverse().find(o => impactClass(o.d, m.flat) === 'down' && !o.noPraise);
+  const lines = [];
+  if (worst) lines.push(`${conf(worst)}${m.worse(worst)}`);
+  if (best) lines.push(`${conf(best)}${m.better(best)}`);
+  return (lines.length ? lines : [none]).map(l => `<p class="headline">${l}</p>`).join('');
+}
+function resultBlock(key, res, m, o) {
+  if (res.usable < 10) return `<p class="empty">${o.emptyMsg}</p>`;
+  if (!res.out.length) return `<p class="empty">${o.noneMsg}</p>`;
+  const out = res.out, top = out.slice().sort((x, y) => Math.abs(y.d) - Math.abs(x.d)).slice(0, 8).sort((x, y) => y.d - x.d);
+  const table = `<div class="tbl-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>${o.heading}</th><th>${capFirst(m.unit[1])}</th><th>${m.col}</th><th>${m.other}</th><th>Difference</th></tr></thead><tbody>
+    ${out.map(x => `<tr><td>${esc(x.label)}</td><td>${x.n}</td><td>${fmtNum(round1(x.a))}</td><td>${fmtNum(round1(x.c))}</td><td class="${{ up: 'delta-up', down: 'delta-down', flat: '' }[impactClass(x.d, m.flat)]}">${signed(x.d)}</td></tr>`).join('')}
   </tbody></table></div>`;
-  return `${impactChart(top)}
+  return `${patternHeadline(out, m, o.headlineNone)}
+    ${impactChart(top, m)}
     ${out.length > top.length ? `<p class="hint" style="margin-top:6px">Showing the ${top.length} biggest differences. The table has all ${out.length}.</p>` : ''}
     <details class="more-table" data-key="${key}" ${S.open[key] ? 'open' : ''}><summary>Show as a table</summary>${table}</details>
     <p class="hint" style="margin-top:8px">${o.note}</p>`;
 }
+function patternBlock(key, rows, tests, o) { return resultBlock(key, patternData(rows, tests, o.sameDay), nextDayMetric(), o); }
+// Food tests shared by the next-day chart and the "a few hours later" chart.
+function foodTests(applies) {
+  const st = D().settings, tags = FOOD_TAGS.concat(st.customTags || []).filter(t => !(t === 'Alcohol' && st.showAlcohol !== false));
+  return tags.map(t => ({ label: tagLabel(t), say: `after meals tagged “${tagLabel(t)}”`, noPraise: t === 'Alcohol', has: r => r.tags.has(t), applies }))
+    .concat(MACROS.map(([k, l]) => ({ label: `A lot of ${l.toLowerCase()} (6+)`, say: `after meals with a lot of ${l.toLowerCase()}`, has: r => r[k] != null && r[k] >= 6, applies })));
+}
 function triggerTable(rows) {
   const ate = r => r.tags.size || MACROS.some(([k]) => r[k] != null) || r.drinks || r.cigs;
-  const st = D().settings, tags = FOOD_TAGS.concat(st.customTags || []).filter(t => !(t === 'Alcohol' && st.showAlcohol !== false));
-  const tests = tags.map(t => ({ label: tagLabel(t), has: r => r.tags.has(t), applies: ate }))
-    .concat(MACROS.map(([k, l]) => ({ label: `${l} rated 6 or more`, has: r => r[k] != null && r[k] >= 6, applies: ate })));
-  if (st.showAlcohol !== false) tests.push({ label: 'Any alcohol', has: r => r.drinks > 0 || r.tags.has('Alcohol'), applies: ate }, { label: '3 or more drinks', has: r => r.drinks >= 3, applies: ate });
-  if (st.showSmoking !== false) tests.push({ label: 'Smoked', has: r => r.cigs > 0, applies: ate });
+  const st = D().settings, tests = foodTests(ate);
+  if (st.showAlcohol !== false) tests.push({ label: 'Any alcohol', say: 'after drinking alcohol', noPraise: true, has: r => r.drinks > 0 || r.tags.has('Alcohol'), applies: ate }, { label: '3 or more drinks', say: 'after 3 or more drinks', noPraise: true, has: r => r.drinks >= 3, applies: ate });
+  if (st.showSmoking !== false) tests.push({ label: 'Smoked', say: 'after smoking', noPraise: true, has: r => r.cigs > 0, applies: ate });
   return patternBlock('tblFood', rows, tests, {
     heading: 'What you had',
     emptyMsg: 'Keep logging meals and symptoms for a couple of weeks. This then compares your next-day score after different foods.',
     noneMsg: 'Not enough tagged meals yet. Add tags and food ratings when you log meals.',
+    headlineNone: 'No food or drink clearly stands out yet.',
     note: 'Patterns in your own log, not proof that a food causes symptoms. Talk to your doctor or dietitian before cutting foods out.',
   });
 }
 function timingTable(rows) {
   const meals2 = r => r.mealCount >= 2, meals1 = r => r.mealCount >= 1, doses = r => r.hadDoses;
   const tests = [
-    { label: 'A gap of 5+ hours between meals', has: r => r.gapMax >= 300, applies: meals2 },
-    { label: 'First meal after 11 AM', has: r => r.firstMeal >= 660, applies: meals1 },
-    { label: 'Ate within 2 hours of bed (or after 9 PM)', has: r => r.lateMeal === true, applies: r => r.lateMeal != null },
-    { label: 'Missed a scheduled dose', has: r => r.missed, applies: doses },
-    { label: 'A dose taken 2+ hours late', has: r => r.late, applies: doses },
-    { label: 'A medicine taken against its food instructions', has: r => r.foodOff, applies: r => r.hadDoses && r.mealCount >= 1 },
-    { label: 'Uneven gap between doses of the same medicine', has: r => r.uneven, applies: doses },
+    { label: 'A gap of 5+ hours between meals', say: 'after a gap of 5+ hours between meals', has: r => r.gapMax >= 300, applies: meals2 },
+    { label: 'First meal after 11 AM', say: 'after a late first meal (after 11 AM)', has: r => r.firstMeal >= 660, applies: meals1 },
+    { label: 'Ate within 2 hours of bed (or after 9 PM)', say: 'after eating close to bedtime', has: r => r.lateMeal === true, applies: r => r.lateMeal != null },
+    { label: 'Missed a scheduled dose', say: 'after a missed dose', has: r => r.missed, applies: doses },
+    { label: 'A dose taken 2+ hours late', say: 'after a dose taken 2+ hours late', has: r => r.late, applies: doses },
+    { label: 'A medicine taken against its food instructions', say: 'after taking a medicine against its food instructions', has: r => r.foodOff, applies: r => r.hadDoses && r.mealCount >= 1 },
+    { label: 'Uneven gap between doses of the same medicine', say: 'after uneven gaps between doses', has: r => r.uneven, applies: doses },
   ];
   return patternBlock('tblTiming', rows, tests, {
     heading: 'What happened',
     emptyMsg: 'Keep logging meals, doses and symptoms for a couple of weeks. This then shows whether meal gaps or dose timing line up with a higher score the next day.',
     noneMsg: 'No clear timing patterns yet. Keep logging meals and doses with their times.',
+    headlineNone: 'Meal and dose timing don’t clearly change how your next day goes yet.',
     note: '“Against its food instructions” means a “with food” medicine taken more than an hour from a meal, or an “empty stomach” one taken within an hour of eating. Patterns, not proof: talk to your doctor before changing when you take medicines.',
   });
 }
@@ -1334,22 +1394,143 @@ function sleepTable(rows) {
   const usual = beds.length ? beds[Math.floor(beds.length / 2)] : null;
   const has = r => !!r.sl;
   const tests = [
-    { label: 'Under 6 hours asleep', has: r => r.sl.total < 360, applies: has },
-    { label: 'Under 7 hours asleep', has: r => r.sl.total < 420, applies: has },
-    { label: 'Took 30+ minutes to fall asleep', has: r => r.sl.latency >= 30, applies: has },
-    { label: 'Woke from pain or other reasons (not the bathroom)', has: r => r.sl.wakeOther >= 1, applies: has },
-    { label: 'Poor sleep quality (1–2 out of 5)', has: r => r.sl.quality <= 2, applies: r => has(r) && r.sl.quality != null },
-    { label: 'Woke up drowsy (3 or less out of 10)', has: r => r.sl.morning <= 3, applies: r => has(r) && r.sl.morning != null },
-    { label: 'Went to bed after midnight', has: r => r.sl.bed >= 0, applies: has },
-    { label: 'Bedtime an hour or more off your usual', has: r => Math.abs(r.sl.bed - usual) >= 60, applies: r => has(r) && usual != null },
+    { label: 'Under 6 hours asleep', say: 'after nights under 6 hours', has: r => r.sl.total < 360, applies: has },
+    { label: 'Under 7 hours asleep', say: 'after nights under 7 hours', has: r => r.sl.total < 420, applies: has },
+    { label: 'Took 30+ minutes to fall asleep', say: 'after taking 30+ minutes to fall asleep', has: r => r.sl.latency >= 30, applies: has },
+    { label: 'Woke from pain or other reasons (not the bathroom)', say: 'after nights you woke from pain or other reasons', has: r => r.sl.wakeOther >= 1, applies: has },
+    { label: 'Poor sleep quality (1–2 out of 5)', say: 'after poor-quality sleep', has: r => r.sl.quality <= 2, applies: r => has(r) && r.sl.quality != null },
+    { label: 'Woke up drowsy (3 or less out of 10)', say: 'after waking up drowsy', has: r => r.sl.morning <= 3, applies: r => has(r) && r.sl.morning != null },
+    { label: 'Went to bed after midnight', say: 'after going to bed after midnight', has: r => r.sl.bed >= 0, applies: has },
+    { label: 'Bedtime an hour or more off your usual', say: 'after a bedtime an hour or more off your usual', has: r => Math.abs(r.sl.bed - usual) >= 60, applies: r => has(r) && usual != null },
   ];
-  const intro = usual != null && nights.length >= 5 ? `<p style="margin-bottom:10px">Your usual bedtime is around <strong>${fmtTime(fromMin(usual))}</strong>.</p>` : '';
+  const intro = usual != null && nights.length >= 5 ? `<p class="hint" style="margin-bottom:8px">Your usual bedtime is around ${fmtTime(fromMin(usual))}.</p>` : '';
   return intro + patternBlock('tblSleep', rows, tests, {
     heading: 'The night before', sameDay: true,
     emptyMsg: 'Keep logging your nights and symptoms for a couple of weeks. This then compares your score after different kinds of nights.',
     noneMsg: 'No clear sleep patterns yet. Keep logging your nights, including quality and how you feel on waking.',
+    headlineNone: 'Your sleep doesn’t clearly change how your next day goes yet.',
     note: 'Each night is compared with your score the day after it. Bathroom trips at night both break up sleep and add to the score, so a rough night and a higher score can go together for that reason alone. That is why the wake-up row leaves bathroom trips out.',
   });
+}
+
+// ---------- symptoms a few hours after meals (from check-ins) ----------
+const SYMPTOMS = { bloating: ['Bloating', 3], pain: ['Belly pain', 10], nausea: ['Nausea', 3] };
+function symptomPicker() {
+  const cur = S.mealSym || 'bloating';
+  return `<div class="segbtns" role="group" aria-label="Symptom">${Object.entries(SYMPTOMS).map(([k, [l]]) => `<button type="button" data-act="mealSym" data-k="${k}" aria-pressed="${k === cur}">${l}</button>`).join('')}</div>`;
+}
+// Each check-in is a unit: the symptom it recorded, and what was eaten 2–6 hours before it.
+function mealSymptomBlock() {
+  const sym = S.mealSym || 'bloating', [name, max] = SYMPTOMS[sym], lower = name.toLowerCase(), units = [];
+  for (let d = addDays(today(), -(S.trendDays - 1)); d <= today(); d = addDays(d, 1)) {
+    const day = D().days[d];
+    if (!day) continue;
+    for (const c of day.checkins || []) {
+      const ct = toMin(c.t);
+      if (ct == null || typeof c[sym] !== 'number') continue;
+      const meals = (day.meals || []).filter(x => { const g = ct - toMin(x.t); return g >= 120 && g <= 360; });
+      if (!meals.length) continue;
+      const u = { value: c[sym], tags: new Set(meals.flatMap(x => x.tags || [])) };
+      for (const [k] of MACROS) { const v = meals.map(x => x[k]).filter(n => typeof n === 'number'); u[k] = v.length ? Math.max(...v) : null; }
+      units.push(u);
+    }
+  }
+  const often = (o, k, word, fallback) => (k * 2 > o.n ? `${word} than usual ${k} of ${o.n} times` : fallback);
+  const m = {
+    low: `Less ${lower} later`, high: `More ${lower} later`, col: `${name} later`, other: 'After other meals', unit: ['check-in', 'check-ins'],
+    flat: max === 3 ? 0.3 : 0.5, scale: max === 3 ? 3 : 1, minMax: max === 3 ? 1 : 2,
+    tip: o => `${o.label}\n${name} a few hours later: ${fmtNum(round1(o.a))} (${o.n} ${plural(o.n, 'check-in', 'check-ins')})\nAfter other meals: ${fmtNum(round1(o.c))}`,
+    worse: o => `A few hours ${o.say}, your ${lower} was ${often(o, o.worseK, 'worse', 'a bit worse on average')}.`,
+    better: o => `A few hours ${o.say}, your ${lower} was ${often(o, o.betterK, 'milder', 'a bit milder on average')}.`,
+  };
+  return resultBlock('tblMealSym', compareUnits(units, foodTests(() => true)), m, {
+    heading: 'What you had',
+    emptyMsg: `Check in a few times a day, including 2–6 hours after meals, for a couple of weeks. This then shows which foods are followed by more ${lower} a few hours later.`,
+    noneMsg: 'Not enough tagged meals before your check-ins yet. Add tags and food ratings when you log meals.',
+    headlineNone: `No food clearly changes your ${lower} a few hours later yet.`,
+    note: `Uses check-ins 2–6 hours after a meal. ${max === 3 ? 'None is 0 and severe is 3.' : 'Belly pain is 0–10.'} Patterns, not proof.`,
+  });
+}
+
+// ---------- time of day ----------
+const BLOCKS = [[0, 360, 'Night'], [360, 540, 'Early morning'], [540, 720, 'Late morning'], [720, 1020, 'Afternoon'], [1020, 1260, 'Evening'], [1260, 1440, 'Late evening']];
+const blockOf = m => BLOCKS.findIndex(([a, b]) => m >= a && m < b);
+const blockRange = ([a, b]) => `${fmtTime(fromMin(a))}–${fmtTime(fromMin(b % 1440))}`;
+function todRows(items) {
+  return `<div class="tod">${items.map(x => `<div class="tod-row" data-tip="${esc(x.tip)}"><span class="tod-label">${x.label}<small>${x.sub}</small></span><span class="tod-track">${x.bars.map(([w, cls]) => `<i class="tod-bar ${cls}" style="width:${w}%"></i>`).join('')}</span><span class="tod-val">${x.val}</span></div>`).join('')}</div>`;
+}
+function timeOfDayBlock(rows) {
+  let html = '';
+  // bathroom trips by time of day
+  const days = rows.filter(r => r.trips > 0), counts = BLOCKS.map(() => ({ all: 0, urgent: 0 }));
+  for (const r of days) for (const b of r.day.bm || []) { const i = blockOf(toMin(b.t)); if (i >= 0) { counts[i].all++; if (b.urgency) counts[i].urgent++; } }
+  if (days.length >= 5) {
+    const per = counts.map(c => c.all / days.length), maxPer = Math.max(...per, 0.1), top = per.indexOf(Math.max(...per));
+    html += `<p class="headline">Most of your bathroom trips happen in the <strong>${BLOCKS[top][2].toLowerCase()}</strong> (${blockRange(BLOCKS[top])}): about ${fmtNum(round1(per[top]))} a day.</p>`;
+    html += `<p class="sublbl" style="margin:4px 0 6px">Bathroom trips, average per day</p>` + todRows(BLOCKS.map((bk, i) => {
+      const all = (per[i] / maxPer) * 100, urg = counts[i].all ? (counts[i].urgent / counts[i].all) * all : 0;
+      return { label: bk[2], sub: blockRange(bk), val: fmtNum(round1(per[i])), bars: [[urg, 'urgent'], [all - urg, 'neutral']], tip: `${bk[2]} (${blockRange(bk)})\n${fmtNum(round1(per[i]))} trips a day${counts[i].urgent ? `, ${counts[i].urgent} urgent in total` : ''}` };
+    })) + `<div class="chart-legend"><span><i style="background:var(--warn)"></i>Urgent</span><span><i style="background:var(--bar-neutral)"></i>Other trips</span></div>`;
+  } else html += '<p class="empty">Log bathroom trips on a few more days to see when they usually happen.</p>';
+  // a check-in symptom by time of day
+  const sym = S.mealSym || 'bloating', [name, max] = SYMPTOMS[sym], sums = BLOCKS.map(() => []);
+  for (const r of rows) for (const c of (r.day && r.day.checkins) || []) { const i = blockOf(toMin(c.t)); if (i >= 0 && typeof c[sym] === 'number') sums[i].push(c[sym]); }
+  const avgs = sums.map(v => (v.length >= 3 ? mean(v) : null)), have = avgs.filter(v => v != null);
+  html += `<div class="card-head" style="margin:18px 0 8px"><span class="sublbl">${name} from your check-ins</span>${symptomPicker()}</div>`;
+  if (have.length >= 2) {
+    const hi = avgs.indexOf(Math.max(...have)), lo = avgs.indexOf(Math.min(...have)), flat = max === 3 ? 0.3 : 0.5;
+    html += avgs[hi] - avgs[lo] >= flat
+      ? `<p class="headline">${name} tends to be worst in the <strong>${BLOCKS[hi][2].toLowerCase()}</strong> and mildest in the <strong>${BLOCKS[lo][2].toLowerCase()}</strong>.</p>`
+      : `<p class="headline">${name} is about the same at different times of day.</p>`;
+    html += todRows(BLOCKS.map((bk, i) => ({ label: bk[2], sub: blockRange(bk), val: avgs[i] == null ? '–' : max === 3 ? SEVERITY[Math.round(avgs[i])] : `${fmtNum(round1(avgs[i]))}/10`, bars: [[avgs[i] == null ? 0 : (avgs[i] / max) * 100, 'sym']], tip: `${bk[2]} (${blockRange(bk)})\n${avgs[i] == null ? 'Fewer than 3 check-ins' : `${name}: ${fmtNum(round1(avgs[i]))} on average (${sums[i].length} check-ins)`}` })));
+  } else html += `<p class="empty">Check in at different times of day (at least 3 check-ins in two or more parts of the day) to see when your ${name.toLowerCase()} is worst.</p>`;
+  return html;
+}
+
+// ---------- plain-word headlines for the main charts ----------
+function scoreHeadline(rows) {
+  const sc = rows.filter(r => r.score != null);
+  if (sc.length < 3) return '<p class="headline">Log bathroom trips and check-ins on a few more days to see how things are going.</p>';
+  const word = i => ['quiet', 'mild', 'moderate', 'high'][i], cut = addDays(today(), -7);
+  const recent = sc.filter(r => r.date > cut), earlier = sc.filter(r => r.date <= cut);
+  let text;
+  if (recent.length >= 2 && earlier.length >= 3) {
+    const r = band(mean(recent.map(x => x.score))).i, e = band(mean(earlier.map(x => x.score))).i;
+    text = r < e ? `Your symptoms have eased: mostly <strong>${word(r)}</strong> over the last week, down from ${word(e)} before that.`
+      : r > e ? `Your symptoms have picked up: mostly <strong>${word(r)}</strong> over the last week, up from ${word(e)} before that.`
+      : `Fairly steady: mostly <strong>${word(r)}</strong> over the last week, about the same as before.`;
+  } else text = `Mostly <strong>${word(band(mean(sc.map(x => x.score))).i)}</strong> over this period.`;
+  let streak = 0;
+  for (let i = rows.length - 1; i >= 0; i--) { const r = rows[i]; if (r.score == null) { if (r.date === today()) continue; break; } if (band(r.score).i === 0) streak++; else break; }
+  if (streak >= 3) text += ` ${streak} calm days in a row.`;
+  return `<p class="headline">${text}</p>`;
+}
+function bathroomHeadline(rows) {
+  const bm = rows.filter(r => r.trips > 0);
+  if (!bm.length) return '';
+  const bloodDays = bm.filter(r => r.blood > 0), last = bloodDays.length ? bloodDays[bloodDays.length - 1].date : null;
+  const since = last ? daysBetween(last, today()) : null, nights = rows.filter(r => r.night > 0).length, urges = rows.reduce((a, r) => a + (r.urges || 0), 0);
+  const parts = [`About <strong>${fmtNum(round1(mean(bm.map(r => r.trips))))} trips</strong> a day.`];
+  parts.push(bloodDays.length ? `Blood on ${bloodDays.length} of ${bm.length} days${since >= 3 ? `, none in the last ${since} days` : ''}.` : 'No blood in this period.');
+  if (nights) parts.push(`Woke for the bathroom on ${nights} ${plural(nights, 'night', 'nights')}.`);
+  if (urges) parts.push(`Plus ${urges} ${plural(urges, 'urge', 'urges')} where nothing came.`);
+  return `<p class="headline">${parts.join(' ')}</p>`;
+}
+function sleepHeadline(rows) {
+  const n = rows.filter(r => r.sleep != null);
+  if (!n.length) return '';
+  const short = n.filter(r => r.sleep < 6).length;
+  return `<p class="headline">You slept <strong>${fmtDur(mean(n.map(r => r.sleep)) * 60)}</strong> on an average night${short ? `. ${short} ${plural(short, 'night was', 'nights were')} under 6 hours` : ''}.</p>`;
+}
+function macroHeadline(rows) {
+  const words = ['hardly any', 'a little', 'some', 'a lot of', 'mostly'], parts = [];
+  for (const [k, l] of MACROS) {
+    const v = rows.map(r => r[k]).filter(x => x != null);
+    if (v.length) parts.push(`${words[Math.min(4, Math.floor((mean(v) - 1) / 2))]} ${l.toLowerCase()}`);
+  }
+  if (!parts.length) return '';
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
+  return `<p class="headline">On a typical day, your meals had ${list}.</p>`;
 }
 // How soon bathroom trips follow meals: a common IBD pattern (the gut speeds up after eating).
 function afterMealStats(rows) {
@@ -1369,9 +1550,9 @@ function afterMealStats(rows) {
     if (r.gapMax != null) gaps.push(r.gapMax);
   }
   const parts = [];
-  if (withMeal >= 10) parts.push(`<strong>${Math.round((soon / withMeal) * 100)}%</strong> of your daytime bathroom trips came within an hour of eating${soon ? `, on average ${Math.round(sum / soon)} minutes after` : ''}.`);
-  if (gaps.length >= 5) parts.push(`Your longest gap between meals was <strong>${fmtDur(mean(gaps))}</strong> on an average day.`);
-  return parts.length ? `<p style="margin-bottom:10px">${parts.join(' ')}</p>` : '';
+  if (withMeal >= 10) parts.push(`About <strong>${Math.round((soon / withMeal) * 10)} in 10</strong> of your daytime bathroom trips came within an hour of eating${soon ? `, usually about ${Math.round(sum / soon)} minutes after` : ''}.`);
+  if (gaps.length >= 5) parts.push(`Your longest gap between meals was about ${fmtDur(mean(gaps))} on an average day.`);
+  return parts.length ? `<p class="headline">${parts.join(' ')}</p>` : '';
 }
 function dailyTable(rows) {
   const r = rows.slice().reverse().filter(x => x.score != null || x.trips || x.sleep != null || x.drinks || x.cigs || MACROS.some(([k]) => x[k] != null));
@@ -1555,6 +1736,19 @@ function chips(name, labels, selected = [], values) {
 function range(name, min, max, value) {
   return `<div class="range"><input type="range" name="${name}" id="${fid(name)}" min="${min}" max="${max}" step="1" value="${value ?? min}" data-out="o-${name}"><output id="o-${name}">${value ?? min}</output></div>`;
 }
+// Words shown for a 1–10 food slider (two steps per word).
+const MACRO_WORDS = { carbs: ['Hardly any', 'A little', 'About half', 'A lot', 'Mostly'], protein: ['Hardly any', 'A little', 'About half', 'A lot', 'Mostly'], fat: ['Hardly any', 'A little', 'About half', 'A lot', 'Mostly'], fiber: ['Hardly any', 'A little', 'Some', 'A lot', 'Very high'] };
+const sliderWord = (words, v) => words[Math.max(0, Math.min(words.length - 1, Math.floor((Number(v) - 1) / 2)))];
+const macroWord = (k, v) => sliderWord(MACRO_WORDS[k], v);
+// Compact row: name, slider, then the answer in words. Starts "Not rated" like optSlider.
+function optSliderRow(name, label, value, words) {
+  const set = value != null && value !== '';
+  return `<div class="oslider orow ${set ? '' : 'unset'}" data-oslider="${name}" data-words="${words.join('|')}">
+    <label class="lbl" for="f-${name}">${label}</label>
+    <input type="range" id="f-${name}" min="1" max="10" step="1" value="${set ? value : 5}" data-oslider-input="${name}" aria-label="${label}">
+    <span class="oval">${set ? sliderWord(words, value) : 'Not rated'}</span>
+    <input type="hidden" name="${name}" value="${set ? value : ''}"></div>`;
+}
 // A 1–10 (or 0–10) slider with no value until it's moved. The value is carried by a hidden input.
 function optSlider(name, label, value, left, right, min = 1, max = 10) {
   const set = value != null && value !== '';
@@ -1571,7 +1765,7 @@ function setOptSlider(form, name, value) {
   if (set) range.value = value; else range.value = Math.round((Number(range.min) + Number(range.max)) / 2);
   hidden.value = set ? value : '';
   box.classList.toggle('unset', !set);
-  box.querySelector('.oval').textContent = set ? value : 'Not rated';
+  box.querySelector('.oval').textContent = !set ? 'Not rated' : box.dataset.words ? sliderWord(box.dataset.words.split('|'), value) : value;
 }
 function scale5(name, value, low, high) {
   return `${seg(name, ['1', '2', '3', '4', '5'], value, { values: [1, 2, 3, 4, 5] })}<span class="hint">1 = ${low}, 5 = ${high}</span>`;
@@ -1600,6 +1794,7 @@ function sheetBm(date, entry, isUrge = false) {
       <p class="hint" data-when="urge:on">Saved as an urge, not a bathroom trip, so it doesn't change your trip count or score.</p>
       <div class="field" data-when="urge:">${group('Stool type <span class="hint">Bristol scale</span>', bristol + '<span class="hint">3–4 is typical. 6–7 means loose or watery.</span>')}</div>
       <div class="field" data-when="urge:">${group('Blood', seg('blood', BLOOD, e.blood, { cls: 'blood' }))}</div>
+      <label class="toggle" data-when="urge:"><input type="checkbox" name="mucus" id="f-mucus" ${e.mucus ? 'checked' : ''}><span>Mucus</span></label>
       ${group('Urgency', seg('urgency', URGENCY, e.urgency))}
       <div class="field"><label class="lbl" for="f-pain">Pain or cramping (0–10)</label>${range('pain', 0, 10, e.pain)}</div>
       ${hasIron() ? '<p class="sub-note" data-when="urge:">You take iron, which often turns stool dark or black. Mention any change you are unsure about to your doctor.</p>' : ''}
@@ -1612,7 +1807,7 @@ function sheetBm(date, entry, isUrge = false) {
     onSave: fd => {
       const urge = fd.get('urge') === 'on';
       const x = { id: e.id, t: fd.get('t'), urgency: Number(fd.get('urgency')) || 0, pain: Number(fd.get('pain')) || 0, night: fd.get('night') === 'on', note: (fd.get('note') || '').trim() };
-      if (!urge) Object.assign(x, { bristol: Number(fd.get('bristol')) || null, blood: Number(fd.get('blood')) || 0 });
+      if (!urge) Object.assign(x, { bristol: Number(fd.get('bristol')) || null, blood: Number(fd.get('blood')) || 0, mucus: fd.get('mucus') === 'on' });
       mutDay(date, d => {
         d.bm = d.bm.filter(y => y.id !== e.id); d.urges = d.urges.filter(y => y.id !== e.id);
         (urge ? d.urges : d.bm).push(x);
@@ -1628,7 +1823,6 @@ function mealTypeFor(hm) { const m = toMin(hm) ?? 720; return m < 630 ? 'Breakfa
 function sheetMeal(date, entry) {
   const t = entry ? entry.t : defTime(date);
   const e = entry || { id: uid(), t, type: mealTypeFor(t), desc: '', tags: [], portion: 'Normal', carbs: null, protein: null, fat: null, fiber: null, note: '' };
-  const MEAL_SLIDERS = { carbs: ['How much of this meal was carbs?', 'Mostly carbs'], protein: ['How much of it was protein?', 'Mostly protein'], fat: ['How much of it was fat?', 'Mostly fat'], fiber: ['How much fibre was in it?', 'High in fibre'] };
   const favs = D().settings.favorites || [];
   const recent = [...new Set(Object.values(D().days).flatMap(d => (d.meals || []).map(x => x.desc)).filter(Boolean))].slice(-40);
   openSheet({
@@ -1637,7 +1831,7 @@ function sheetMeal(date, entry) {
       <div class="row2">${field('Time', timeInput('t', e.t))}${field('Portion', `<select name="portion" id="f-portion">${PORTIONS.map(p => `<option ${p === e.portion ? 'selected' : ''}>${p}</option>`).join('')}</select>`)}</div>
       ${group('Type', seg('type', MEAL_TYPES, e.type, { values: MEAL_TYPES }))}
       ${field('What did you have?', textInput('desc', e.desc, 'e.g. Rice, dal and curd', 'required list="meal-list"') + `<datalist id="meal-list">${recent.map(r => `<option value="${esc(r)}"></option>`).join('')}</datalist>`)}
-      ${MACROS.map(([k]) => optSlider(k, MEAL_SLIDERS[k][0], e[k], 'Hardly any', MEAL_SLIDERS[k][1])).join('')}
+      <fieldset class="field"><div class="rate-head"><legend class="lbl">This meal was…</legend><button type="button" data-act="clearMacros">Clear</button></div>${MACROS.map(([k, l]) => optSliderRow(k, l, e[k], MACRO_WORDS[k])).join('')}</fieldset>
       ${group('Tags <span class="hint">used to spot triggers</span>', TAG_GROUPS.map(([g, list]) => `<div class="tag-group"><span class="sublbl">${g}</span>${chips('tags', list.map(tagLabel), e.tags || [], list)}</div>`).join('') + customTagBlock(e.tags || []))}
       ${noteField(e.note)}
       ${favs.some(f => f.desc === e.desc) ? '' : '<label class="toggle"><input type="checkbox" name="fav" id="f-fav"><span>Save to favourites</span></label>'}`,
@@ -1746,7 +1940,7 @@ function sheetNap(date, entry) {
 /* ---------- check-in ---------- */
 function sheetCheckin(date, entry) {
   const list = getDay(date).checkins || [];
-  const e = entry || { id: uid(), t: date === today() ? nowHM() : '21:00', wellbeing: 0, pain: 0, fatigue: 0, stress: 2, mood: 3, bloating: 0, nausea: 0, extra: [], weight: null, note: '' };
+  const e = entry || { id: uid(), t: date === today() ? nowHM() : '21:00', wellbeing: 0, pain: 0, fatigue: 0, bloating: 0, nausea: 0, extra: [], weight: null, note: '' };
   const wu = D().settings.weightUnit || 'kg';
   openSheet({
     title: entry ? 'Edit check-in' : list.length ? 'Another check-in' : 'Daily check-in',
@@ -1757,13 +1951,13 @@ function sheetCheckin(date, entry) {
       <div class="field"><label class="lbl" for="f-fatigue">Tiredness (0–10)</label>${range('fatigue', 0, 10, e.fatigue)}</div>
       ${group('Bloating', seg('bloating', SEVERITY, e.bloating ?? 0))}
       ${group('Nausea', seg('nausea', SEVERITY, e.nausea ?? 0))}
-      ${group('Stress', scale5('stress', e.stress, 'calm', 'very stressed'))}
-      ${group('Mood', scale5('mood', e.mood, 'low', 'great'))}
-      ${(() => { const items = EXTRA.filter(x => !x.cd || D().settings.condition === 'cd' || (e.extra || []).includes(x.id)); return group('Anything else today?', chips('extra', items.map(x => x.label), e.extra || [], items.map(x => x.id))); })()}
+      ${optSlider('stress10', 'Stress', stressOf(e), 'Calm', 'Very stressed', 0, 10)}
+      ${optSlider('mood10', 'Mood', moodOf(e), 'Low', 'Great', 0, 10)}
+      ${group('Right now I have… <span class="hint">only “Linked to IBD” counts in the score</span>', EXTRA_GROUPS.map(([g, title]) => { const items = EXTRA.filter(x => x.grp === g && (!x.cd || D().settings.condition === 'cd' || (e.extra || []).includes(x.id))); return `<div class="tag-group"><span class="sublbl">${title}</span>${chips('extra', items.map(x => x.label), e.extra || [], items.map(x => x.id))}</div>`; }).join(''))}
       <div class="row2">${field(`Weight (${wu})`, numInput('weight', e.weight, 'min="0" placeholder="Optional"'))}<span></span></div>
       ${noteField(e.note)}`,
     onSave: fd => {
-      const x = { id: e.id, t: fd.get('t'), wellbeing: Number(fd.get('wellbeing')) || 0, pain: Number(fd.get('pain')) || 0, fatigue: Number(fd.get('fatigue')) || 0, stress: Number(fd.get('stress')) || null, mood: Number(fd.get('mood')) || null, bloating: Number(fd.get('bloating')) || 0, nausea: Number(fd.get('nausea')) || 0, extra: fd.getAll('extra'), weight: num(fd.get('weight')), weightUnit: wu, note: (fd.get('note') || '').trim() };
+      const x = { id: e.id, t: fd.get('t'), wellbeing: Number(fd.get('wellbeing')) || 0, pain: Number(fd.get('pain')) || 0, fatigue: Number(fd.get('fatigue')) || 0, stress10: fd.get('stress10') ? Number(fd.get('stress10')) : null, mood10: fd.get('mood10') ? Number(fd.get('mood10')) : null, bloating: Number(fd.get('bloating')) || 0, nausea: Number(fd.get('nausea')) || 0, extra: fd.getAll('extra'), weight: num(fd.get('weight')), weightUnit: wu, note: (fd.get('note') || '').trim() };
       if (e.tenesmus) x.tenesmus = true;
       upsertEntry(date, 'checkins', x);
       if (!entry) toast(list.length ? 'Check-in added' : 'Check-in saved');
@@ -2065,13 +2259,13 @@ async function exportCsv() {
     const date = d.date;
     if (d.sleep) { const c = sleepCalc(date, d.sleep); add(date, d.sleep.wake, 'Sleep', 'Night', c ? fmtDur(c.total) : '', `In bed ${d.sleep.inBed}; asleep ${d.sleep.asleep}; woke ${d.sleep.wake}; up ${d.sleep.up}; quality ${d.sleep.quality ?? ''}/5; woke up feeling ${morningScore(d.sleep) ?? ''}/10; bathroom trips ${c ? c.trips : ''}; woke from pain ${d.sleep.pain || 0}; other ${d.sleep.other || 0}; ${(d.sleep.factors || []).map(sleepFactorLabel).join(', ')}`, d.sleep.note); }
     for (const x of d.naps || []) add(date, x.t, 'Nap', 'Nap', `${x.mins} min`, '', x.note);
-    for (const b of d.bm || []) add(date, b.t, 'Bathroom', `Bristol type ${b.bristol ?? ''}`, '', `Blood: ${BLOOD[b.blood || 0]}; urgency: ${URGENCY[b.urgency || 0]}; pain ${b.pain || 0}/10${b.night ? '; at night' : ''}`, b.note);
+    for (const b of d.bm || []) add(date, b.t, 'Bathroom', `Bristol type ${b.bristol ?? ''}`, '', `Blood: ${BLOOD[b.blood || 0]}${b.mucus ? '; mucus' : ''}; urgency: ${URGENCY[b.urgency || 0]}; pain ${b.pain || 0}/10${b.night ? '; at night' : ''}`, b.note);
     for (const x of d.meals || []) add(date, x.t, 'Meal', x.desc, x.portion, `${x.type}; carbs ${x.carbs ?? '–'}/10; protein ${x.protein ?? '–'}/10; fat ${x.fat ?? '–'}/10; fibre ${x.fiber ?? '–'}/10; tags: ${(x.tags || []).map(tagLabel).join(', ')}`, x.note);
     for (const x of d.doses || []) { const m = meds[x.medId]; add(date, x.t, m ? KINDS[m.kind] : 'Medicine', m ? m.name : x.name, x.amount != null ? `${x.amount} ${x.unit || ''}` : '', x.status === 'taken' ? `Taken${x.slot ? ` (scheduled ${x.slot})` : ''}${x.why ? `; for: ${x.why}` : ''}${x.site ? `; site: ${x.site}` : ''}` : `Skipped: ${x.reason || ''}`, x.note); }
     for (const x of d.exercise || []) add(date, x.t, 'Exercise', x.type, `${x.mins} min`, `${x.intensity}; steps ${x.steps ?? ''}; energy ${x.before ?? ''}→${x.after ?? ''}; symptoms: ${x.symptoms}`, x.note);
     const dsc = dayScore(d);
     if (dsc) add(date, '', 'Activity score', scoreDef().short, String(dsc.score), dsc.partial ? 'No check-in that day' : '', '');
-    for (const c of d.checkins || []) add(date, c.t, 'Check-in', WELLBEING[c.wellbeing ?? 0], '', `Belly pain ${c.pain}/10; tiredness ${c.fatigue}/10; stress ${c.stress ?? ''}/5; mood ${c.mood ?? ''}/5; bloating ${SEVERITY[c.bloating || 0].toLowerCase()}; nausea ${SEVERITY[c.nausea || 0].toLowerCase()}${c.tenesmus ? '; felt the need, nothing came' : ''}; ${(c.extra || []).map(id => (EXTRA.find(e => e.id === id) || {}).label).join(', ')}${c.weight ? `; weight ${c.weight} ${c.weightUnit || ''}` : ''}`, c.note);
+    for (const c of d.checkins || []) add(date, c.t, 'Check-in', WELLBEING[c.wellbeing ?? 0], '', `Belly pain ${c.pain}/10; tiredness ${c.fatigue}/10; stress ${stressOf(c) ?? ''}/10; mood ${moodOf(c) ?? ''}/10; bloating ${SEVERITY[c.bloating || 0].toLowerCase()}; nausea ${SEVERITY[c.nausea || 0].toLowerCase()}${c.tenesmus ? '; felt the need, nothing came' : ''}; ${(c.extra || []).map(id => (EXTRA.find(e => e.id === id) || {}).label).join(', ')}${c.weight ? `; weight ${c.weight} ${c.weightUnit || ''}` : ''}`, c.note);
     for (const u of d.urges || []) add(date, u.t, 'Urge (nothing came)', '', '', `Urgency: ${URGENCY[u.urgency || 0]}; pain ${u.pain || 0}/10${u.night ? '; at night' : ''}`, u.note);
     if (d.period) add(date, '', 'Period', FLOW[d.period.flow || 0], '', (d.period.symptoms || []).join(', '), d.period.note);
     if (d.water) add(date, '', 'Water', 'Glasses', String(d.water), '', '');
@@ -2270,6 +2464,8 @@ const A = {
     await Store.clearAll(); SAMPLE = null; S.tab = 'today'; S.date = today(); render(); toast('All data on this device was deleted');
   },
   clearSlider(el) { setOptSlider(el.closest('form'), el.dataset.k, null); },
+  clearMacros(el) { const f = el.closest('form'); for (const [k] of MACROS) setOptSlider(f, k, null); },
+  mealSym(el) { S.mealSym = el.dataset.k; render(); },
   exitSample() { exitSample(); },
   exportJson() { exportJson(); },
   applyUpdate() { if (waitingWorker) waitingWorker.postMessage('skipWaiting'); },
@@ -2288,7 +2484,7 @@ function markSlider(t) {
   if (!box) return;
   box.querySelector('input[type=hidden]').value = t.value;
   box.classList.remove('unset');
-  box.querySelector('.oval').textContent = t.value;
+  box.querySelector('.oval').textContent = box.dataset.words ? sliderWord(box.dataset.words.split('|'), t.value) : t.value;
 }
 document.addEventListener('click', e => { if (e.target.matches && e.target.matches('[data-oslider-input]')) markSlider(e.target); });
 document.addEventListener('input', e => {
@@ -2332,7 +2528,7 @@ document.addEventListener('pointerover', e => {
 });
 document.addEventListener('pointerout', e => { if (e.pointerType === 'mouse' && e.target.closest && e.target.closest('[data-tip]')) tip.hidden = true; });
 document.addEventListener('pointerdown', e => {
-  const el = e.target.closest && e.target.closest('.chart [data-tip], .impact [data-tip]');
+  const el = e.target.closest && e.target.closest('.chart [data-tip], .impact [data-tip], .tod [data-tip]');
   if (!el || e.pointerType === 'mouse') return;
   tip.textContent = el.dataset.tip; tip.hidden = false;
   const r = el.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
