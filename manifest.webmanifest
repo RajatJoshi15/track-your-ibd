@@ -1,7 +1,7 @@
 {
   "id": "./",
-  "name": "Track Your IBD",
-  "short_name": "Track Your IBD",
+  "name": "IBD Tracker",
+  "short_name": "IBD Tracker",
   "description": "Track your IBD: symptoms, bathroom trips, food, sleep, exercise and medicines. No sign-up. Your data stays on your device.",
   "start_url": "./",
   "scope": "./",

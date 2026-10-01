@@ -1,4 +1,4 @@
-# Track Your IBD
+# IBD Tracker
 
 Live at <https://track-your-ibd.netlify.app>.
 
@@ -36,10 +36,10 @@ The privacy page lists rajatjoshi1518@gmail.com for questions. To change it, edi
 
 ## Publishing an update
 
-1. Open `sw.js` and change the `VERSION` line, for example `track-your-ibd-2026-09-27-3` to `track-your-ibd-2026-10-02-1`. Without this, installed copies keep the old version.
+1. Open `sw.js` and change the `VERSION` line, for example `ibd-tracker-2026-10-01-4` to `ibd-tracker-2026-10-02-1`. Without this, installed copies keep the old version.
 2. In Netlify, open your project › **Deploys**, and drag the folder onto the page again.
 
-People with the app open see "A new version of Track Your IBD is ready" with an **Update** button.
+People with the app open see "A new version of IBD Tracker is ready" with an **Update** button.
 
 ## Try it on your Mac before publishing
 
@@ -51,4 +51,4 @@ Then open <http://localhost:8000>. Offline mode is turned off on localhost so ch
 
 ## Moving data from the old UC Daybook
 
-In the old version, go to **More › Download backup (.json)**. Then in Track Your IBD, go to **More › Restore from backup** and pick that file.
+In the old version, go to **More › Download backup (.json)**. Then in IBD Tracker, go to **More › Restore from backup** and pick that file.

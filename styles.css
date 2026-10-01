@@ -505,3 +505,42 @@ details.more-table summary { cursor: pointer; font-size: 13.5px; font-weight: 60
 .tod-bar.urgent { background: var(--warn); }
 .tod-bar.sym { background: var(--c-check); border-radius: 0 4px 4px 0; }
 .tod-val { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* messages under Estimated activity: pastel tappable icons */
+:root { --ack-g-bg: #D7EFCE; --ack-g-fg: #3B6D11; --ack-y-bg: #FBEBB3; --ack-y-fg: #854F0B; --ack-k-bg: #F8D3DE; --ack-k-fg: #993556; --ack-b-bg: #D3E5F8; --ack-b-fg: #185FA5; --ack-v-bg: #E3E0FA; --ack-v-fg: #534AB7; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ack-g-bg: #2C4524; --ack-g-fg: #A9D17A; --ack-y-bg: #4A3A12; --ack-y-fg: #F5CF7A; --ack-k-bg: #4A2433; --ack-k-fg: #F0A3BE; --ack-b-bg: #1D3550; --ack-b-fg: #93C0EE; --ack-v-bg: #2D2955; --ack-v-fg: #B9B3F0; } }
+:root[data-theme="dark"] { --ack-g-bg: #2C4524; --ack-g-fg: #A9D17A; --ack-y-bg: #4A3A12; --ack-y-fg: #F5CF7A; --ack-k-bg: #4A2433; --ack-k-fg: #F0A3BE; --ack-b-bg: #1D3550; --ack-b-fg: #93C0EE; --ack-v-bg: #2D2955; --ack-v-fg: #B9B3F0; }
+.am-wrap { position: relative; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.am { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; padding-right: 44px; }
+.am-text { flex: 1 1 210px; min-width: 0; }
+.am-icons { display: flex; gap: 6px; flex: none; }
+.am-text { font-size: 15px; line-height: 1.45; }
+.am-neutral .am-text { font-size: 14px; color: var(--muted); }
+.am-hide { position: absolute; top: 12px; right: 0; border: 0; background: none; padding: 4px; font-size: 12.5px; color: var(--muted); text-decoration: underline; }
+.am-reply { min-height: 18px; margin-top: 8px; font-size: 13px; color: var(--muted); }
+.am-reply:empty { min-height: 0; margin: 0; }
+.am-quote { margin: 0; padding-right: 44px; font-size: 15px; font-style: italic; line-height: 1.5; }
+.am-quote span { display: block; margin-top: 2px; font-style: normal; font-size: 13px; color: var(--muted); }
+.am .am-quote, .am + .am-quote { margin-top: 10px; }
+.am-notebox { display: flex; gap: 8px; margin-top: 10px; }
+.am-notebox[hidden] { display: none; }
+.am-notebox input { min-height: 38px; font-size: 15px; }
+.ack { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 1px; height: 44px; min-width: 44px; padding: 0 9px; border-radius: 22px; border: 1.5px solid var(--fg); background: transparent; color: var(--fg); transition: background-color .25s; }
+.ack .ic { width: 21px; height: 21px; }
+.ack.on { background: var(--bg); }
+.ack-ten { --bg: var(--ack-g-bg); --fg: var(--ack-g-fg); }
+.ack-spark { --bg: var(--ack-y-bg); --fg: var(--ack-y-fg); }
+.ack-heart { --bg: var(--ack-k-bg); --fg: var(--ack-k-fg); }
+.ack-flag { --bg: var(--ack-b-bg); --fg: var(--ack-b-fg); }
+.ack-note { --bg: var(--ack-v-bg); --fg: var(--ack-v-fg); }
+.ack-spark.on .ic, .ack-heart.on .ic, .ack-flag.on .ic { fill: currentColor; }
+.ack-hands { display: inline-flex; gap: 1px; }
+.ack-hands .ic:first-child { transform: scaleX(-1); }
+.ack-fx { position: absolute; left: 50%; top: 50%; pointer-events: none; }
+.ack-dot { width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; border-radius: 50%; }
+.ack-mini { margin: -7px 0 0 -7px; }
+.ack-mini .ic { width: 14px; height: 14px; fill: currentColor; }
+.k-note { --k: var(--ack-v-fg); } .k-flag { --k: var(--ack-b-fg); }
+.cal-flag { display: inline-flex; vertical-align: -2px; margin-left: 3px; }
+.cal-flag .ic { width: 12px; height: 12px; }
+.legend .cal-flag { margin: 0 2px 0 0; }

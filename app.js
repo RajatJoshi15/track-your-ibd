@@ -1,4 +1,4 @@
-// Track Your IBD. Everything you enter is stored in this browser (IndexedDB) and never leaves the device.
+// IBD Tracker. Everything you enter is stored in this browser (IndexedDB) and never leaves the device.
 (() => {
 'use strict';
 /* ---------- helpers ---------- */
@@ -124,11 +124,11 @@ const PRESETS = [
 
 /* ---------- state ---------- */
 const LS_KEY = 'ibd-tracker-v1';
-const DEFAULT_SETTINGS = { condition: null, waterGoal: 8, glassMl: 250, weightUnit: 'kg', favorites: [], sleepPending: null, started: false, lastBackup: null, backupEvery: 7, backupSnooze: null, installTipHidden: false, trackCycle: false, favDismissed: [], customTags: [], showAlcohol: true, showSmoking: true, customSymptoms: [] };
+const DEFAULT_SETTINGS = { condition: null, waterGoal: 8, glassMl: 250, weightUnit: 'kg', favorites: [], sleepPending: null, started: false, lastBackup: null, backupEvery: 7, backupSnooze: null, installTipHidden: false, trackCycle: false, favDismissed: [], customTags: [], showAlcohol: true, showSmoking: true, customSymptoms: [], showMessages: true, keepSafetyNotes: true, ownMessages: [], ownMode: 'mix' };
 let R = { days: {}, meds: {}, settings: clone(DEFAULT_SETTINGS) };
 let SAMPLE = null;
 const D = () => SAMPLE || R;
-const S = { tab: 'today', date: today(), followToday: true, histMonth: today().slice(0, 7), trendDays: 30, ready: false, open: {} };
+const S = { acks: {}, amReply: null, tab: 'today', date: today(), followToday: true, histMonth: today().slice(0, 7), trendDays: 30, ready: false, open: {} };
 
 /* ---------- storage: everything stays in this browser (IndexedDB) ---------- */
 function idbOpen() {
@@ -246,13 +246,14 @@ function saveSettings() { persist('meta/settings', D().settings); }
 function saveMed(m) { D().meds[m.id] = m; persist('meds/' + m.id, m); scheduleRender(); }
 function deleteMed(id) { delete D().meds[id]; persist('meds/' + id, null); scheduleRender(); }
 
-function blankDay(date) { return { date, bm: [], urges: [], meals: [], doses: [], exercise: [], naps: [], water: 0, drinks: [], cigs: [], sleep: null, checkins: [] }; }
+function blankDay(date) { return { date, bm: [], urges: [], meals: [], doses: [], exercise: [], naps: [], water: 0, drinks: [], cigs: [], notes: [], flagged: false, sleep: null, checkins: [] }; }
 // Older versions kept one check-in per day in `checkin`; it becomes the first entry of `checkins`.
 function normDay(d) {
   if (!d) return d;
   if (!Array.isArray(d.checkins)) d.checkins = [];
   if (d.checkin) { if (!d.checkins.length) d.checkins.push(Object.assign({ id: 'ci-' + (d.date || uid()) }, d.checkin)); delete d.checkin; }
   if (!Array.isArray(d.urges)) d.urges = [];
+  if (!Array.isArray(d.notes)) d.notes = [];
   return d;
 }
 // The day's check-ins combined: feeling and pain are averaged; an extra symptom counts if ticked in any check-in.
@@ -693,7 +694,7 @@ function isInstalled() {
 }
 function banners() {
   let h = '';
-  if (waitingWorker) h += `<div class="banner"><p><strong>A new version of Track Your IBD is ready.</strong> Update to get the latest changes. Your entries stay as they are.</p><button class="btn primary small" data-act="applyUpdate">Update now</button></div>`;
+  if (waitingWorker) h += `<div class="banner"><p><strong>A new version of IBD Tracker is ready.</strong> Update to get the latest changes. Your entries stay as they are.</p><button class="btn primary small" data-act="applyUpdate">Update now</button></div>`;
   if (SAMPLE) h += `<div class="banner"><p><strong>You're looking at sample data.</strong> It shows what three months of logging looks like. Nothing you change here is saved.</p><button class="btn primary small" data-act="exitSample">${R.settings.started ? 'Back to my log' : 'Start my own log'}</button></div>`;
   if (Store.mode === 'memory' && !SAMPLE) h += `<div class="banner warn"><p>This browser is blocking storage, so entries will be lost when you close the page. Try another browser, or leave private browsing.</p></div>`;
   if (!SAMPLE && Store.mode !== 'memory') {
@@ -703,7 +704,7 @@ function banners() {
       h += `<div class="banner warn"><p><strong>${st.lastBackup ? `Last backup ${n} days ago.` : 'No backup yet.'}</strong> Your entries live only on this device. Save a copy to Google Drive, iCloud or Files in case it's lost or reset.</p><span class="btns"><button class="btn primary small" data-act="exportJson">${icon('save')}Save backup</button><button class="btn ghost small" data-act="snoozeBackup">Later</button></span></div>`;
     }
     if (S.tab === 'today' && !isInstalled() && !st.installTipHidden && st.started) {
-      h += `<div class="banner"><p><strong>Install Track Your IBD</strong> as an app so your browser keeps your data safe and it opens like any other app.</p><span class="btns"><button class="btn small" data-act="showInstall">Show me how</button><button class="btn ghost small" data-act="hideInstallTip">Not now</button></span></div>`;
+      h += `<div class="banner"><p><strong>Install IBD Tracker</strong> as an app so your browser keeps your data safe and it opens like any other app.</p><span class="btns"><button class="btn small" data-act="showInstall">Show me how</button><button class="btn ghost small" data-act="hideInstallTip">Not now</button></span></div>`;
     }
   }
   return h;
@@ -750,6 +751,125 @@ function gauge(score) {
   return `<div class="gauge" aria-hidden="true">${segs.map((s, i) => `<span class="g${i}" style="flex:${s[0]}"></span>`).join('')}${mark}</div>
     <div class="gauge-l" aria-hidden="true">${segs.map(s => `<span style="flex:${s[0]}">${s[1]}</span>`).join('')}</div>`;
 }
+/* ---------- messages under "Estimated activity" (Today only) ---------- */
+// Picked by comparing today's score with the last 7 days. Wording rotates by date, so it stays the same all day.
+const MSG = {
+  high: ['This is a hard day. Rest where you can, and contact your IBD team if it doesn\'t ease.', 'A tough one today. Look after yourself, and reach out to your IBD team if it carries on.', 'Today\'s a heavy day. Get urgent help for heavy bleeding, severe pain or fever.'],
+  rising: ['Your symptoms have been climbing for a few days. Keep an eye on it, and consider contacting your IBD team if it continues.', 'Things have picked up lately. Logging now helps you and your doctor spot a flare early.', 'A few harder days in a row. Worth mentioning to your IBD team if it keeps up.'],
+  first: ['Your first calm day in a while. Enjoy it.', 'A quieter day after a tough stretch. That\'s worth noticing.', 'Calm today, after several harder days. Nice.'],
+  streak: ['{n} calm days in a row. You\'ve got this.', '{n} quiet days running. Whatever you\'re doing, it\'s working.', 'That\'s {n} calm days in a row. Keep it going.'],
+  better: ['Better than your recent days. You\'ve got this.', 'A calmer day than usual. Good to see.', 'Your score is down from your recent average. Nice work.'],
+  improving: ['Still some symptoms, but better than your last few days.', 'Heading the right way: lower than your recent average.', 'Not a calm day yet, but an improving one.'],
+  worse: ['A tougher day than usual. Be kind to yourself today.', 'Higher than your recent days. Rest and fluids can help.', 'Not your best day. Tomorrow\'s a fresh start.'],
+  steady: ['Calm and steady. You\'ve got this.', 'Another quiet day. Steady is good.', 'Things are settled. Keep doing what works for you.'],
+  same: ['About the same as your recent days.', 'Holding steady compared with last week.', 'Similar to your usual. Every entry helps build the picture.'],
+  new: ['Every entry helps. A few more days and you\'ll see how things are going.', 'Good start. Keep logging to see your patterns.', 'You\'re building your picture, one day at a time.'],
+};
+// Shown instead, in plain grey, when someone has turned messages off (if they keep safety notes on).
+const NEUTRAL_MSG = {
+  high: 'High activity today. Contact your IBD team if it doesn\'t ease.',
+  rising: 'Your score has risen 3 days in a row. Contact your IBD team if it continues.',
+  blood: 'Blood logged on {k} days this week. Consider telling your IBD team.',
+};
+const ACK_REPLIES = {
+  ten: ['High ten!', 'Nice one!', 'You did that.'],
+  spark: ['Nice work!', 'Well done.', 'Love to see it.'],
+  heart: ['Sending you care.', 'You\'re not alone in this.', 'Go easy on yourself today.'],
+};
+const SAFETY = ['high', 'rising', 'blood'];
+const dayNum = date => Math.floor(parseYmd(date).getTime() / 864e5);
+function todaySituation(date, sc) {
+  const s = sc.score, bi = band(s).i;
+  const prev = [];
+  for (let i = 1; i <= 7; i++) { const x = dayScore(D().days[addDays(date, -i)]); if (x) prev.push({ i, score: x.score }); }
+  const base = prev.length >= 3 ? mean(prev.map(p => p.score)) : null;
+  if (bi === 3) return { key: 'high' };
+  const d1 = dayScore(D().days[addDays(date, -1)]), d2 = dayScore(D().days[addDays(date, -2)]);
+  if (d1 && d2 && s > d1.score && d1.score > d2.score) return { key: 'rising' };
+  let bloodDays = 0;
+  for (let i = 0; i < 7; i++) if (((D().days[addDays(date, -i)] || {}).bm || []).some(b => (b.blood || 0) >= 2)) bloodDays++;
+  if (bloodDays >= 2) return { key: 'blood', k: bloodDays };
+  if (bi === 0) {
+    const last3 = [1, 2, 3].map(i => dayScore(D().days[addDays(date, -i)]));
+    if (last3.every(x => x && band(x.score).i >= 1)) return { key: 'first' };
+    let streak = 1;
+    for (let i = 1; i < 60; i++) { const x = dayScore(D().days[addDays(date, -i)]); if (x && band(x.score).i === 0) streak++; else break; }
+    if (streak >= 3) return { key: 'streak', n: streak };
+    if (base != null && s <= base - 1) return { key: 'better' };
+    return { key: base == null ? 'new' : 'steady' };
+  }
+  if (base == null) return { key: 'new' };
+  if (s <= base - 1.5) return { key: 'improving' };
+  if (s >= base + 1.5) return { key: 'worse' };
+  return { key: 'same' };
+}
+const ICON_FOR = { high: 'heart', rising: 'heart', blood: 'heart', worse: 'heart', first: 'spark', better: 'spark', improving: 'spark', streak: 'ten', steady: 'ten' };
+function ackButton(kind, date) {
+  const on = !!S.acks[`${date}:${kind}`];
+  const inner = kind === 'ten' ? `<span class="ack-hands">${icon('hand')}${icon('hand')}</span>` : icon(kind === 'spark' ? 'sparkle' : 'heart');
+  const label = { ten: 'High ten', spark: 'Celebrate', heart: 'Send yourself some care' }[kind];
+  return `<button type="button" class="ack ack-${kind} ${on ? 'on' : ''}" data-act="ack" data-k="${kind}" aria-pressed="${on}" aria-label="${label}">${inner}</button>`;
+}
+function flagNoteButtons(date) {
+  const flagged = !!getDay(date).flagged;
+  return `<button type="button" class="ack ack-flag ${flagged ? 'on' : ''}" data-act="flagDay" aria-pressed="${flagged}" aria-label="${flagged ? 'Remove the flag for your doctor' : 'Flag this day for your doctor'}">${icon('flag')}</button>
+    <button type="button" class="ack ack-note" data-act="noteBox" aria-label="Add a note for today">${icon('note')}</button>`;
+}
+function ownQuote(text) { return `<blockquote class="am-quote">“${esc(text)}”<span>— Me</span></blockquote>`; }
+// Returns { html, hideable } for the message area of Today's activity card.
+function activityMessage(date, sc) {
+  if (date !== today()) return { html: '', hideable: false };
+  const st = D().settings, sit = todaySituation(date, sc), safety = SAFETY.includes(sit.key);
+  const notebox = `<div class="am-notebox" hidden><input type="text" id="f-quicknote" maxlength="300" placeholder="How are you feeling right now?" aria-label="Note for today"><button type="button" class="btn small" data-act="saveNote">Save</button></div>`;
+  const reply = `<p class="am-reply" aria-live="polite">${S.amReply && S.amReply.until > Date.now() ? esc(S.amReply.text) : ''}</p>`;
+  if (st.showMessages === false) {
+    if (!safety || st.keepSafetyNotes === false) return { html: '', hideable: false };
+    const text = NEUTRAL_MSG[sit.key].replace('{k}', sit.k);
+    return { html: `<div class="am am-neutral"><div class="am-icons">${flagNoteButtons(date)}</div><p class="am-text">${esc(text)}</p></div>${notebox}${reply}`, hideable: false };
+  }
+  const own = st.ownMessages || [], dn = dayNum(date), pick = own.length ? own[dn % own.length] : null;
+  if (!safety && pick && (st.ownMode === 'only' || dn % 2 === 0)) return { html: ownQuote(pick), hideable: true };
+  if (!safety && st.ownMode === 'only') return { html: '', hideable: false };
+  const text = MSG[sit.key === 'blood' ? 'rising' : sit.key][dn % 3].replace('{n}', sit.n);
+  const kind = ICON_FOR[sit.key];
+  const icons = (kind ? ackButton(kind, date) : '') + (safety ? flagNoteButtons(date) : '');
+  return {
+    html: `<div class="am">${icons ? `<div class="am-icons">${icons}</div>` : ''}<p class="am-text">${esc(text)}</p></div>${safety && pick ? ownQuote(pick) : ''}${safety ? notebox : ''}${reply}`,
+    hideable: true,
+  };
+}
+// Small celebrations when an icon is tapped. Purely for fun: nothing is saved and the score never changes.
+function burst(btn, kind) {
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const color = { ten: 'var(--ack-g-fg)', spark: 'var(--ack-y-fg)', heart: 'var(--ack-k-fg)' }[kind];
+  const up = kind === 'heart', n = kind === 'heart' ? 6 : 14;
+  for (let i = 0; i < n; i++) {
+    const s = document.createElement('span');
+    s.className = up ? 'ack-fx ack-mini' : 'ack-fx ack-dot';
+    if (up) s.innerHTML = icon('heart'); else s.style.background = i % 3 === 2 && kind === 'spark' ? 'var(--ack-y-bg)' : color;
+    if (up) s.style.color = color;
+    btn.appendChild(s);
+    const a = up ? -Math.PI / 2 + (Math.random() - 0.5) * 1.3 : (i / n) * Math.PI * 2 + Math.random() * 0.3;
+    const r = up ? 46 + Math.random() * 26 : 36 + Math.random() * 16;
+    const anim = s.animate([{ transform: 'translate(0,0) scale(1)', opacity: 1 }, { transform: `translate(${Math.cos(a) * r}px,${Math.sin(a) * r}px) scale(${up ? 1.1 : 0.3})`, opacity: 0 }], { duration: up ? 1000 : 650, easing: 'cubic-bezier(.2,.7,.3,1)', delay: kind === 'ten' ? 240 : 0 });
+    anim.onfinish = () => s.remove();
+  }
+  if (kind === 'ten') {
+    const [l, r] = btn.querySelectorAll('.ic');
+    l.animate([{ transform: 'scaleX(-1) rotate(0)' }, { transform: 'scaleX(-1) rotate(-22deg) translateX(-3px)' }, { transform: 'scaleX(-1) rotate(0)' }], { duration: 260, iterations: 2 });
+    r.animate([{ transform: 'rotate(0)' }, { transform: 'rotate(-22deg) translateX(-3px)' }, { transform: 'rotate(0)' }], { duration: 260, iterations: 2 });
+    btn.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.15)' }, { transform: 'scale(1)' }], { duration: 400, delay: 220 });
+  } else if (kind === 'spark') {
+    btn.querySelector('.ic').animate([{ transform: 'rotate(0) scale(1)' }, { transform: 'rotate(25deg) scale(1.3)' }, { transform: 'rotate(0) scale(1)' }], { duration: 450 });
+  } else {
+    btn.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.22)' }, { transform: 'scale(.94)' }, { transform: 'scale(1.16)' }, { transform: 'scale(1)' }], { duration: 850 });
+  }
+}
+function showReply(btn, text) {
+  const p = btn.closest('.activity') && btn.closest('.activity').querySelector('.am-reply');
+  if (p) p.textContent = text;
+  S.amReply = { text, until: Date.now() + 6000 };
+}
 function activityPanel(date) {
   const day = getDay(date), sc = dayScore(day);
   if (!sc) return `<section class="activity"><span class="eyebrow">Estimated activity</span><p class="act-empty">Log bathroom trips and an evening check-in to see an estimated ${scoreDef().short} activity score for this day.</p>${gauge(null)}</section>`;
@@ -764,12 +884,14 @@ function activityPanel(date) {
   if (urges) facts.push(`<span class="fact">${urges} ${plural(urges, 'urge', 'urges')}, nothing came</span>`);
   facts.push(ci ? `<span class="fact">Feeling: ${WELLBEING[ci.wellbeing ?? 0].toLowerCase()}${ci.count > 1 ? ` (average of ${ci.count} check-ins)` : ''}</span>` : '');
   if (ci) for (const id of ci.extra || []) facts.push(`<span class="fact">${esc(extraLabel(id))}</span>`);
+  const msg = activityMessage(date, sc);
   return `<section class="activity" aria-label="Estimated ${scoreDef().short} ${sc.score}, ${b.label}">
     <div class="act-top">
       <div><span class="eyebrow">Estimated activity</span><div class="act-row"><span class="act-score">${sc.score}</span><span class="band b${b.i}">${b.label}</span><span class="act-scale">${scoreDef().short}, of ${scoreDef().max}</span></div></div>
       <p class="act-note">${sc.partial ? 'Add an evening check-in to include how you feel.' : `Estimated ${scoreDef().long}. A guide to trends, not a diagnosis.`}</p>
     </div>
     ${gauge(sc.score)}
+    ${msg.html ? `<div class="am-wrap">${msg.html}${msg.hideable ? '<button type="button" class="am-hide" data-act="hideMsgs">Hide</button>' : ''}</div>` : ''}
     <div class="facts">${facts.join('')}</div>
   </section>`;
 }
@@ -926,6 +1048,8 @@ function timeline(date) {
   for (const u of day.urges || []) {
     push(u.t, 'bm', 'Urge · nothing came', esc([u.urgency ? URGENCY[u.urgency].toLowerCase() : '', u.pain ? `pain ${u.pain}/10` : '', u.night ? 'at night' : '', u.note].filter(Boolean).join(' · ')), `data-act="edit" data-kind="urge" data-id="${u.id}"`, rmBtn('urges', u.id, 'urge'));
   }
+  for (const n of day.notes || []) push(n.t, 'note', 'Note', esc(n.text), 'data-act="noop"', rmBtn('notes', n.id, 'note'));
+  if (day.flagged) items.push({ m: -2, t: '', kind: 'flag', title: 'Flagged for your doctor', sub: '', attrs: 'data-act="noop"', rm: `data-act="unflag" data-date="${date}" aria-label="Remove the flag" title="Remove the flag"` });
   const pd = day.period;
   if (pd && (pd.flow || (pd.symptoms || []).length)) items.push({ m: -1, t: '', kind: 'period', title: pd.flow ? `Period · ${FLOW[pd.flow].toLowerCase()}` : 'Period symptoms', sub: esc((pd.symptoms || []).join(', ')), attrs: 'data-act="edit" data-kind="period" data-id="p"', rm: 'data-act="rmPeriod" aria-label="Delete this period entry" title="Delete"' });
   const nd = (day.drinks || []).length, nc = (day.cigs || []).length;
@@ -957,16 +1081,16 @@ function viewHistory() {
     const bm = (day && day.bm) || [], blood = bm.some(b => b.blood);
     const c = day ? sleepCalc(date, day.sleep) : null;
     const b = sc ? band(sc.score) : null;
-    const flow = (day && day.period && day.period.flow) || 0;
-    const tip = [fmtDay(date), sc ? `${scoreDef().short} ${sc.score} (${b.label})${sc.partial ? ', no check-in' : ''}` : 'No symptoms logged', bm.length ? `${bm.length} ${plural(bm.length, 'trip', 'trips')}${blood ? ', blood seen' : ''}` : '', c ? `Slept ${fmtDur(c.total)}` : '', flow ? `Period: ${FLOW[flow].toLowerCase()}` : ''].filter(Boolean).join('\n');
-    cells.push(`<button class="cal-cell ${b ? 'lv' + b.i : ''} ${date === t ? 'is-today' : ''} ${future ? 'future' : ''}" ${future ? 'disabled' : `data-act="openDay" data-date="${date}"`} data-tip="${esc(tip)}" aria-label="${esc(tip.replace(/\n/g, ', '))}"><span class="cal-d">${d}</span>${sc ? `<span class="cal-s">${sc.score}</span>` : ''}${blood ? '<i class="cal-blood"></i>' : ''}${flow ? '<i class="cal-period"></i>' : ''}</button>`);
+    const flow = (day && day.period && day.period.flow) || 0, flagged = !!(day && day.flagged);
+    const tip = [fmtDay(date), sc ? `${scoreDef().short} ${sc.score} (${b.label})${sc.partial ? ', no check-in' : ''}` : 'No symptoms logged', bm.length ? `${bm.length} ${plural(bm.length, 'trip', 'trips')}${blood ? ', blood seen' : ''}` : '', c ? `Slept ${fmtDur(c.total)}` : '', flow ? `Period: ${FLOW[flow].toLowerCase()}` : '', flagged ? 'Flagged for your doctor' : ''].filter(Boolean).join('\n');
+    cells.push(`<button class="cal-cell ${b ? 'lv' + b.i : ''} ${date === t ? 'is-today' : ''} ${future ? 'future' : ''}" ${future ? 'disabled' : `data-act="openDay" data-date="${date}"`} data-tip="${esc(tip)}" aria-label="${esc(tip.replace(/\n/g, ', '))}"><span class="cal-d">${d}${flagged ? `<span class="cal-flag">${icon('flag')}</span>` : ''}</span>${sc ? `<span class="cal-s">${sc.score}</span>` : ''}${blood ? '<i class="cal-blood"></i>' : ''}${flow ? '<i class="cal-period"></i>' : ''}</button>`);
   }
   return `<div class="pagehead"><h1>History</h1>${syncHtml()}</div>
   <div class="hist">
     <section class="card cal-wrap">
       <div class="cal-head"><button class="icon-btn" data-act="month" data-d="-1" aria-label="Previous month">${icon('left')}</button><h2>${MONTH_FMT.format(first)}</h2><button class="icon-btn" data-act="month" data-d="1" aria-label="Next month" ${atCurrent ? 'disabled' : ''}>${icon('right')}</button></div>
       <div class="cal">${WEEKDAYS.map(w => `<span class="cal-wd">${w}</span>`).join('')}${cells.join('')}</div>
-      <div class="legend"><span><i></i>No symptoms logged</span>${scoreDef().legend.map((l, i) => `<span><i class="l${i}"></i>${l}</span>`).join('')}<span><i class="dot"></i>Blood seen</span>${D().settings.trackCycle ? '<span><i class="period"></i>Period</span>' : ''}</div>
+      <div class="legend"><span><i></i>No symptoms logged</span>${scoreDef().legend.map((l, i) => `<span><i class="l${i}"></i>${l}</span>`).join('')}<span><i class="dot"></i>Blood seen</span>${D().settings.trackCycle ? '<span><i class="period"></i>Period</span>' : ''}<span><span class="cal-flag">${icon('flag')}</span>Flagged for your doctor</span></div>
       <p class="hint">Each day shows its estimated ${scoreDef().short} score. Tap a day to see or edit it.</p>
     </section>
     <div class="col">
@@ -1085,7 +1209,7 @@ function viewWelcome() {
   const c = R.settings.condition;
   return `<div class="welcome">
     <img class="mark" src="icons/icon.svg" alt="">
-    <h1>Track Your IBD<span>One day at a time</span></h1>
+    <h1>IBD Tracker<span>Track your IBD, one day at a time</span></h1>
     <p class="lead">Log bathroom trips, symptoms, food, sleep, exercise and medicines in one place, and see how your IBD is trending.</p>
     <div class="promise">
       <div>${icon('lock')}<span><strong>Private by design.</strong> No account and no sign-up. Everything you enter stays on this device. We never see it.</span></div>
@@ -1096,7 +1220,7 @@ function viewWelcome() {
       <label class="toggle"><input type="checkbox" name="trackCycle" id="w-cycle"><span>Track my periods too <span class="hint">optional</span></span></label>
     </form>
     <div class="btns"><button class="btn primary" data-act="startApp">Start tracking</button><button class="btn" data-act="enterSample">Look around with sample data</button></div>
-    <p class="hint">By using Track Your IBD you agree it's a personal log, not medical advice. <a href="privacy.html">Privacy</a></p>
+    <p class="hint">By using IBD Tracker you agree it's a personal log, not medical advice. <a href="privacy.html">Privacy</a></p>
   </div>`;
 }
 
@@ -1105,11 +1229,11 @@ function installHelp() {
   const ua = navigator.userAgent || '';
   const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
   const safariMac = /Macintosh/.test(ua) && /Safari/.test(ua) && !/Chrome|Chromium|Edg|Firefox/.test(ua) && !ios;
-  if (isInstalled()) return '<p>Track Your IBD is installed on this device.</p>';
-  if (deferredInstall) return `<p>Install the app so it opens from your home screen and your browser keeps your data.</p><div class="card-foot"><button class="btn primary" data-act="install">Install Track Your IBD</button></div>`;
+  if (isInstalled()) return '<p>IBD Tracker is installed on this device.</p>';
+  if (deferredInstall) return `<p>Install the app so it opens from your home screen and your browser keeps your data.</p><div class="card-foot"><button class="btn primary" data-act="install">Install IBD Tracker</button></div>`;
   if (ios) return `<p>On iPhone or iPad, open this page in Safari, then:</p><ol class="steps"><li>Tap the Share button.</li><li>Choose <strong>Add to Home Screen</strong>.</li></ol>`;
   if (safariMac) return `<p>In Safari on your Mac, choose <strong>File › Add to Dock</strong>.</p>`;
-  return `<p>In Chrome, open the ⋮ menu and choose <strong>Add to Home screen</strong> (Android) or <strong>Install Track Your IBD</strong> (computer).</p>`;
+  return `<p>In Chrome, open the ⋮ menu and choose <strong>Add to Home screen</strong> (Android) or <strong>Install IBD Tracker</strong> (computer).</p>`;
 }
 function viewMore() {
   const st = D().settings, favs = st.favorites || [];
@@ -1145,6 +1269,16 @@ function viewMore() {
           <label class="field"><span class="lbl">Weight unit</span><select id="s-weight" name="weightUnit"><option value="kg" ${st.weightUnit === 'kg' ? 'selected' : ''}>kg</option><option value="lb" ${st.weightUnit === 'lb' ? 'selected' : ''}>lb</option></select></label>
         </div>
       </form></section>
+    <section class="card"><div class="card-head"><h2>Messages on Today</h2></div>
+      <form id="messages-form" class="field">
+        <label class="toggle"><input type="checkbox" name="showMessages" id="s-showmsg" ${st.showMessages !== false ? 'checked' : ''}><span>Show encouraging messages on Today</span></label>
+        <label class="toggle"><input type="checkbox" name="keepSafetyNotes" id="s-safety" ${st.keepSafetyNotes !== false ? 'checked' : ''}><span>When messages are off, still show a short note on high or rising days</span></label>
+        <div class="field" style="margin-top:6px"><span class="lbl">Your own messages <span class="hint">shown as a quote, signed “— Me”</span></span>
+          ${(st.ownMessages || []).length ? `<ul class="fav-list">${st.ownMessages.map((m, i) => `<li><span>“${esc(m)}”</span><button type="button" class="icon-btn small" data-act="rmOwnMsg" data-i="${i}" aria-label="Remove this message">${icon('x')}</button></li>`).join('')}</ul>` : '<p class="empty">Add words that help you, for example “One day at a time.”</p>'}
+          <div class="inline add-tag" style="max-width:none"><input type="text" id="f-ownmsg" maxlength="140" placeholder="Add a message that helps you" autocomplete="off" aria-label="New message"><button type="button" class="btn small" data-act="addOwnMsg">Add</button></div>
+        </div>
+        ${(st.ownMessages || []).length ? group('How to use them', seg('ownMode', ['Mix them in with the app’s messages', 'Only show my own messages'], st.ownMode || 'mix', { values: ['mix', 'only'] })) : ''}
+      </form></section>
     <section class="card"><div class="card-head"><h2>Favourite meals</h2></div>
       ${favs.length ? `<ul class="fav-list">${favs.map((f, i) => `<li><span>${esc(f.desc)} <span class="muted">${esc((f.tags || []).map(tagLabel).join(', '))}</span></span><button class="icon-btn small" data-act="rmFav" data-i="${i}" aria-label="Remove ${esc(f.desc)}">${icon('x')}</button></li>`).join('')}</ul>` : '<p class="empty">Meals you log 3 times within a couple of weeks are added here automatically. You can also tick “Save to favourites” when logging a meal.</p>'}
     </section>
@@ -1157,7 +1291,7 @@ function viewMore() {
     <section class="card">${aboutScore()}</section>
     ${SAMPLE ? '' : `<section class="card"><div class="card-head"><h2>Sample data</h2></div><p>See what three months of logging looks like without touching your own entries.</p><div class="card-foot"><button class="btn" data-act="enterSample">Look around with sample data</button></div></section>
     <section class="card danger-zone"><div class="card-head"><h2>Delete all data</h2></div><p>Erase every entry, medicine and setting on this device. Save a backup first if you might want them back. This can't be undone.</p><div class="card-foot"><button class="btn danger" data-act="deleteAll">Delete everything on this device</button></div></section>`}
-    <p class="hint">Track Your IBD is a personal log. It doesn't give medical advice. Talk to your doctor before changing your treatment, and get urgent help for heavy bleeding, severe pain, high fever or signs of dehydration. <a href="privacy.html">Privacy</a></p>
+    <p class="hint">IBD Tracker is a personal log. It doesn't give medical advice. Talk to your doctor before changing your treatment, and get urgent help for heavy bleeding, severe pain, high fever or signs of dehydration. <a href="privacy.html">Privacy</a></p>
   </div>`;
 }
 
@@ -1875,6 +2009,16 @@ function addCustomTag(form) {
   input.focus();
 }
 
+// Messages people write for themselves; shown as a quote signed "— Me".
+function addOwnMessage(form) {
+  const input = form && form.querySelector('#f-ownmsg'), v = input ? input.value.trim().replace(/\s+/g, ' ') : '';
+  if (!v) return;
+  const st = D().settings;
+  if ((st.ownMessages || []).length >= 20) { toast('You can keep up to 20 messages. Remove one to add another.'); return; }
+  st.ownMessages = (st.ownMessages || []).concat(v.slice(0, 140));
+  saveSettings(); render(); toast('Message added');
+}
+
 // People's own check-in tags, kept in settings so they show on every check-in.
 function customSymptomBlock(selected) {
   const mine = D().settings.customSymptoms || [];
@@ -2274,7 +2418,7 @@ function gatherAll() {
   return { app: 'ibd-tracker', version: 1, exportedAt: new Date().toISOString(), settings: clone(D().settings), meds: clone(Object.values(D().meds)), days };
 }
 async function exportJson() {
-  const res = await saveFile(`track-your-ibd-backup-${today()}.json`, JSON.stringify(gatherAll(), null, 1), 'application/json');
+  const res = await saveFile(`ibd-tracker-backup-${today()}.json`, JSON.stringify(gatherAll(), null, 1), 'application/json');
   if ((res === 'shared' || res === 'downloaded') && !SAMPLE) {
     R.settings.lastBackup = new Date().toISOString(); R.settings.backupSnooze = null; saveSettings(); render();
     toast(res === 'shared' ? 'Backup saved' : 'Backup saved to your Downloads folder');
@@ -2298,24 +2442,27 @@ async function exportCsv() {
     for (const c of d.checkins || []) add(date, c.t, 'Check-in', WELLBEING[c.wellbeing ?? 0], '', `Belly pain ${c.pain}/10; tiredness ${c.fatigue}/10; stress ${stressOf(c) ?? ''}/10; mood ${moodOf(c) ?? ''}/10; bloating ${SEVERITY[c.bloating || 0].toLowerCase()}; nausea ${SEVERITY[c.nausea || 0].toLowerCase()}${c.tenesmus ? '; felt the need, nothing came' : ''}; ${(c.extra || []).map(extraLabel).join(', ')}${c.weight ? `; weight ${c.weight} ${c.weightUnit || ''}` : ''}`, c.note);
     for (const u of d.urges || []) add(date, u.t, 'Urge (nothing came)', '', '', `Urgency: ${URGENCY[u.urgency || 0]}; pain ${u.pain || 0}/10${u.night ? '; at night' : ''}`, u.note);
     if (d.period) add(date, '', 'Period', FLOW[d.period.flow || 0], '', (d.period.symptoms || []).join(', '), d.period.note);
+    if (d.flagged) add(date, '', 'Flag', 'Flagged for your doctor', '', '', '');
+    for (const n of d.notes || []) add(date, n.t, 'Note', '', '', '', n.text);
     if (d.water) add(date, '', 'Water', 'Glasses', String(d.water), '', '');
     if ((d.drinks || []).length) add(date, '', 'Alcohol', 'Drinks', String(d.drinks.length), `At ${d.drinks.join(', ')}`, '');
     if ((d.cigs || []).length) add(date, '', 'Smoking', 'Cigarettes', String(d.cigs.length), `At ${d.cigs.join(', ')}`, '');
   }
   const csvCell = v => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-  const res = await saveFile(`track-your-ibd-${today()}.csv`, '﻿' + rows.map(r => r.map(csvCell).join(',')).join('\r\n'), 'text/csv');
+  const res = await saveFile(`ibd-tracker-${today()}.csv`, '﻿' + rows.map(r => r.map(csvCell).join(',')).join('\r\n'), 'text/csv');
   if (res === 'downloaded') toast('Spreadsheet saved to your Downloads folder');
 }
 function mergeDay(a, b) {
   b = normDay(clone(b));
   const out = normDay(Object.assign(blankDay(b.date), clone(a || {})));
-  for (const k of ['bm', 'urges', 'meals', 'doses', 'exercise', 'naps', 'checkins']) {
+  for (const k of ['bm', 'urges', 'meals', 'doses', 'exercise', 'naps', 'checkins', 'notes']) {
     const map = new Map((out[k] || []).map(x => [x.id, x]));
     for (const x of b[k] || []) map.set(x.id, x);
     out[k] = [...map.values()];
   }
   out.sleep = out.sleep || b.sleep || null;
   out.period = out.period || b.period || null;
+  out.flagged = !!(out.flagged || b.flagged);
   for (const k of ['drinks', 'cigs']) out[k] = (b[k] || []).length > (out[k] || []).length ? b[k] : out[k] || [];
   out.water = Math.max(out.water || 0, b.water || 0);
   out.date = b.date; out.updatedAt = Date.now();
@@ -2323,8 +2470,8 @@ function mergeDay(a, b) {
 }
 async function importFile(file) {
   let data;
-  try { data = JSON.parse(await file.text()); } catch (e) { toast("That file isn't a Track Your IBD backup."); return; }
-  if (!data || !['ibd-tracker', 'uc-daybook'].includes(data.app) || !Array.isArray(data.days)) { toast("That file isn't a Track Your IBD backup."); return; }
+  try { data = JSON.parse(await file.text()); } catch (e) { toast("That file isn't an IBD Tracker backup."); return; }
+  if (!data || !['ibd-tracker', 'uc-daybook'].includes(data.app) || !Array.isArray(data.days)) { toast("That file isn't an IBD Tracker backup."); return; }
   toast(`Restoring ${data.days.length} days…`);
   let n = 0;
   try {
@@ -2443,8 +2590,36 @@ const A = {
     if (gone) st.favDismissed = (st.favDismissed || []).filter(k => k !== mealKey(gone.desc)).concat(mealKey(gone.desc)).slice(-200);
     saveSettings(); render();
   },
+  ack(el) {
+    const k = el.dataset.k, key = `${today()}:${k}`, on = !S.acks[key];
+    S.acks[key] = on;
+    el.classList.toggle('on', on); el.setAttribute('aria-pressed', on);
+    if (on) { showReply(el, ACK_REPLIES[k][Math.floor(Math.random() * 3)]); burst(el, k); try { if (navigator.vibrate && (!navigator.userActivation || navigator.userActivation.isActive)) navigator.vibrate(12); } catch (e) { /* not supported */ } }
+    else showReply(el, '');
+  },
+  flagDay() {
+    const d = today(), on = !getDay(d).flagged;
+    S.amReply = { text: on ? 'Flagged for your doctor. This day now shows a flag in History.' : 'Flag removed.', until: Date.now() + 6000 };
+    mutDay(d, x => { x.flagged = on; });
+  },
+  unflag(el) { const d = el.dataset.date || S.date; mutDay(d, x => { x.flagged = false; }); toast('Flag removed', 'Undo', () => mutDay(d, x => { x.flagged = true; })); },
+  noteBox(el) {
+    const box = el.closest('.activity').querySelector('.am-notebox');
+    if (!box) return;
+    box.hidden = !box.hidden; el.classList.toggle('on', !box.hidden);
+    if (!box.hidden) box.querySelector('input').focus();
+  },
+  saveNote(el) {
+    const box = el.closest('.am-notebox'), input = box.querySelector('input'), text = input.value.trim();
+    if (!text) { showReply(el, 'Write a few words first.'); input.focus(); return; }
+    S.amReply = { text: 'Saved to today\'s notes.', until: Date.now() + 6000 };
+    mutDay(today(), x => { x.notes.push({ id: uid(), t: nowHM(), text }); });
+  },
+  hideMsgs() { D().settings.showMessages = false; saveSettings(); render(); toast('Messages hidden. You can turn them back on in More › Settings.'); },
+  addOwnMsg(el) { addOwnMessage(el.closest('form')); },
+  rmOwnMsg(el) { const st = D().settings; st.ownMessages = (st.ownMessages || []).filter((m, i) => i !== Number(el.dataset.i)); saveSettings(); render(); },
   rmDose(el) { removeEntry(S.date, 'doses', el.dataset.id, 'dose log'); },
-  rmEntry(el) { removeEntry(S.date, el.dataset.list, el.dataset.id, { bm: 'bathroom trip', urges: 'urge', meals: 'meal', exercise: 'exercise', naps: 'nap', checkins: 'check-in' }[el.dataset.list]); },
+  rmEntry(el) { removeEntry(S.date, el.dataset.list, el.dataset.id, { bm: 'bathroom trip', urges: 'urge', meals: 'meal', exercise: 'exercise', naps: 'nap', checkins: 'check-in', notes: 'note' }[el.dataset.list]); },
   rmSleep(el) { const date = el.dataset.date, old = getDay(date).sleep; if (!old) return; mutDay(date, d => { d.sleep = null; }); toast('Deleted night', 'Undo', () => mutDay(date, d => { d.sleep = old; })); },
 
   rmPeriod() { const date = S.date, old = getDay(date).period; if (!old) return; mutDay(date, d => { d.period = null; }); toast('Deleted period entry', 'Undo', () => mutDay(date, d => { d.period = old; })); },
@@ -2527,6 +2702,14 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'f-import' && t.files && t.files[0]) { importFile(t.files[0]); t.value = ''; return; }
+  if (t.form && t.form.id === 'messages-form') {
+    const st = D().settings;
+    if (t.name === 'showMessages') st.showMessages = t.checked;
+    if (t.name === 'keepSafetyNotes') st.keepSafetyNotes = t.checked;
+    if (t.name === 'ownMode') st.ownMode = t.value === 'only' ? 'only' : 'mix';
+    if (t.name) { saveSettings(); toast('Settings saved'); }
+    return;
+  }
   if (t.form && t.form.id === 'settings-form') {
     const st = D().settings;
     if (t.name === 'condition') st.condition = t.value;
@@ -2541,11 +2724,13 @@ document.addEventListener('change', e => {
     if (['condition', 'trackCycle', 'showAlcohol', 'showSmoking'].includes(t.name)) render();
   }
 });
-document.addEventListener('submit', e => { if (e.target.id === 'settings-form') e.preventDefault(); });
+document.addEventListener('submit', e => { if (e.target.id === 'settings-form' || e.target.id === 'messages-form') e.preventDefault(); });
 document.addEventListener('toggle', e => { const k = e.target.dataset && e.target.dataset.key; if (k) S.open[k] = e.target.open; }, true);
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && sheetCtx) closeSheet();
   if (e.key === 'Enter' && e.target && e.target.id === 'f-newtag') { e.preventDefault(); addCustomTag(e.target.closest('form')); }
+  if (e.key === 'Enter' && e.target && e.target.id === 'f-ownmsg') { e.preventDefault(); addOwnMessage(e.target.closest('form')); }
+  if (e.key === 'Enter' && e.target && e.target.id === 'f-quicknote') { e.preventDefault(); A.saveNote(e.target); }
   if (e.key === 'Enter' && e.target && e.target.id === 'f-newsym') { e.preventDefault(); addCustomSymptom(e.target.closest('form')); }
 });
 
