@@ -52,6 +52,8 @@ const EXTRA = [
   { id: 'anxious', label: 'Anxious', grp: 'mind' }, { id: 'low', label: 'Low or down', grp: 'mind' },
 ];
 const EXTRA_GROUPS = [['ibd', 'Linked to IBD'], ['gut', 'Gut'], ['body', 'Body'], ['mind', 'Mind']];
+// Built-in tags are stored by id; people's own check-in tags are stored as their text. Own tags never count in the score.
+const extraLabel = id => (EXTRA.find(x => x.id === id) || {}).label || id;
 const CONDITIONS = [['uc', 'Ulcerative colitis'], ['cd', "Crohn's disease"], ['ibdu', 'IBD, type not confirmed'], ['unsure', 'Not sure']];
 const MACROS = [['carbs', 'Carbs', 'c'], ['protein', 'Protein', 'p'], ['fat', 'Fat', 'f'], ['fiber', 'Fibre', 'fb']];
 // Stored tag values keep their original spelling; this is only what people see.
@@ -122,7 +124,7 @@ const PRESETS = [
 
 /* ---------- state ---------- */
 const LS_KEY = 'ibd-tracker-v1';
-const DEFAULT_SETTINGS = { condition: null, waterGoal: 8, glassMl: 250, weightUnit: 'kg', favorites: [], sleepPending: null, started: false, lastBackup: null, backupEvery: 7, backupSnooze: null, installTipHidden: false, trackCycle: false, favDismissed: [], customTags: [], showAlcohol: true, showSmoking: true };
+const DEFAULT_SETTINGS = { condition: null, waterGoal: 8, glassMl: 250, weightUnit: 'kg', favorites: [], sleepPending: null, started: false, lastBackup: null, backupEvery: 7, backupSnooze: null, installTipHidden: false, trackCycle: false, favDismissed: [], customTags: [], showAlcohol: true, showSmoking: true, customSymptoms: [] };
 let R = { days: {}, meds: {}, settings: clone(DEFAULT_SETTINGS) };
 let SAMPLE = null;
 const D = () => SAMPLE || R;
@@ -761,7 +763,7 @@ function activityPanel(date) {
   if (bm.some(x => x.mucus)) facts.push('<span class="fact">Mucus</span>');
   if (urges) facts.push(`<span class="fact">${urges} ${plural(urges, 'urge', 'urges')}, nothing came</span>`);
   facts.push(ci ? `<span class="fact">Feeling: ${WELLBEING[ci.wellbeing ?? 0].toLowerCase()}${ci.count > 1 ? ` (average of ${ci.count} check-ins)` : ''}</span>` : '');
-  if (ci) for (const id of ci.extra || []) { const e = EXTRA.find(x => x.id === id); if (e) facts.push(`<span class="fact">${e.label}</span>`); }
+  if (ci) for (const id of ci.extra || []) facts.push(`<span class="fact">${esc(extraLabel(id))}</span>`);
   return `<section class="activity" aria-label="Estimated ${scoreDef().short} ${sc.score}, ${b.label}">
     <div class="act-top">
       <div><span class="eyebrow">Estimated activity</span><div class="act-row"><span class="act-score">${sc.score}</span><span class="band b${b.i}">${b.label}</span><span class="act-scale">${scoreDef().short}, of ${scoreDef().max}</span></div></div>
@@ -919,7 +921,7 @@ function timeline(date) {
   for (const x of day.exercise || []) push(x.t, 'ex', `${esc(x.type)} · ${x.mins || 0} min`, esc([x.intensity, x.steps ? `${fmtNum(x.steps)} steps` : '', x.symptoms && x.symptoms !== 'None' ? x.symptoms.toLowerCase() : ''].filter(Boolean).join(' · ')), `data-act="edit" data-kind="ex" data-id="${x.id}"`, rmBtn('exercise', x.id, 'exercise'));
   for (const x of day.naps || []) push(x.t, 'nap', `Nap · ${x.mins} min`, esc(x.note || ''), `data-act="edit" data-kind="nap" data-id="${x.id}"`, rmBtn('naps', x.id, 'nap'));
   for (const ci of day.checkins || []) {
-    push(ci.t || '21:00', 'checkin', 'Check-in', esc([WELLBEING[ci.wellbeing ?? 0], `pain ${ci.pain ?? 0}/10`, `fatigue ${ci.fatigue ?? 0}/10`, ci.bloating ? `${SEVERITY[ci.bloating].toLowerCase()} bloating` : '', ci.nausea ? `${SEVERITY[ci.nausea].toLowerCase()} nausea` : '', (ci.extra || []).map(id => (EXTRA.find(x => x.id === id) || {}).label).filter(Boolean).join(', ').toLowerCase(), ci.tenesmus ? 'felt the need, nothing came' : ''].filter(Boolean).join(' · ')), `data-act="edit" data-kind="checkin" data-id="${ci.id}"`, rmBtn('checkins', ci.id, 'check-in'));
+    push(ci.t || '21:00', 'checkin', 'Check-in', esc([WELLBEING[ci.wellbeing ?? 0], `pain ${ci.pain ?? 0}/10`, `fatigue ${ci.fatigue ?? 0}/10`, ci.bloating ? `${SEVERITY[ci.bloating].toLowerCase()} bloating` : '', ci.nausea ? `${SEVERITY[ci.nausea].toLowerCase()} nausea` : '', (ci.extra || []).map(extraLabel).join(', ').toLowerCase(), ci.tenesmus ? 'felt the need, nothing came' : ''].filter(Boolean).join(' · ')), `data-act="edit" data-kind="checkin" data-id="${ci.id}"`, rmBtn('checkins', ci.id, 'check-in'));
   }
   for (const u of day.urges || []) {
     push(u.t, 'bm', 'Urge · nothing came', esc([u.urgency ? URGENCY[u.urgency].toLowerCase() : '', u.pain ? `pain ${u.pain}/10` : '', u.night ? 'at night' : '', u.note].filter(Boolean).join(' · ')), `data-act="edit" data-kind="urge" data-id="${u.id}"`, rmBtn('urges', u.id, 'urge'));
@@ -1148,6 +1150,9 @@ function viewMore() {
     </section>
     <section class="card"><div class="card-head"><h2>Your food tags</h2></div>
       ${(st.customTags || []).length ? `<ul class="fav-list">${st.customTags.map(t => `<li><span>${esc(t)}</span><button class="icon-btn small" data-act="rmTag" data-tag="${esc(t)}" aria-label="Remove ${esc(t)}">${icon('x')}</button></li>`).join('')}</ul><p class="hint" style="margin-top:8px">Removing a tag keeps it on meals you already logged.</p>` : '<p class="empty">Add your own tags from the meal form, for example a food you suspect.</p>'}
+    </section>
+    <section class="card"><div class="card-head"><h2>Your check-in tags</h2></div>
+      ${(st.customSymptoms || []).length ? `<ul class="fav-list">${st.customSymptoms.map(t => `<li><span>${esc(t)}</span><button class="icon-btn small" data-act="rmSym" data-tag="${esc(t)}" aria-label="Remove ${esc(t)}">${icon('x')}</button></li>`).join('')}</ul><p class="hint" style="margin-top:8px">Removing a tag keeps it on check-ins you already logged. Your own tags don't count in the activity score.</p>` : '<p class="empty">Add your own tags from the check-in form, for example a symptom that isn\'t listed.</p>'}
     </section>
     <section class="card">${aboutScore()}</section>
     ${SAMPLE ? '' : `<section class="card"><div class="card-head"><h2>Sample data</h2></div><p>See what three months of logging looks like without touching your own entries.</p><div class="card-foot"><button class="btn" data-act="enterSample">Look around with sample data</button></div></section>
@@ -1870,6 +1875,31 @@ function addCustomTag(form) {
   input.focus();
 }
 
+// People's own check-in tags, kept in settings so they show on every check-in.
+function customSymptomBlock(selected) {
+  const mine = D().settings.customSymptoms || [];
+  const own = mine.concat(selected.filter(t => !EXTRA.some(x => x.id === t) && !mine.includes(t)));
+  return `<div class="tag-group"><span class="sublbl">Your own</span><div class="chips" data-custom-syms>${own.map(t => `<label><input type="checkbox" name="extra" value="${esc(t)}" ${selected.includes(t) ? 'checked' : ''}><span>${esc(t)}</span></label>`).join('')}</div>
+    <div class="inline add-tag"><input type="text" id="f-newsym" placeholder="Add your own, e.g. Itchy skin" maxlength="30" autocomplete="off" aria-label="New check-in tag"><button type="button" class="btn small" data-act="addSym">Add tag</button></div></div>`;
+}
+function addCustomSymptom(form) {
+  const input = form && form.querySelector('#f-newsym'), v = input ? input.value.trim().replace(/\s+/g, ' ') : '';
+  if (!v) return;
+  const lower = v.toLowerCase(), st = D().settings;
+  const builtIn = EXTRA.find(x => x.id === lower || x.label.toLowerCase() === lower);
+  const existing = builtIn ? builtIn.id : (st.customSymptoms || []).find(t => t.toLowerCase() === lower);
+  if (existing) {
+    const box = [...form.querySelectorAll('input[name=extra]')].find(c => c.value === existing);
+    if (box) box.checked = true;
+  } else {
+    st.customSymptoms = (st.customSymptoms || []).concat(v).slice(-60);
+    saveSettings();
+    form.querySelector('[data-custom-syms]').insertAdjacentHTML('beforeend', `<label><input type="checkbox" name="extra" value="${esc(v)}" checked><span>${esc(v)}</span></label>`);
+  }
+  input.value = '';
+  input.focus();
+}
+
 // A meal logged 3 times, with no more than 15 days between one log and the next, becomes a favourite.
 // Meals someone removed from favourites are never added back automatically.
 const mealKey = t => String(t || '').trim().toLowerCase();
@@ -1953,7 +1983,7 @@ function sheetCheckin(date, entry) {
       ${group('Nausea', seg('nausea', SEVERITY, e.nausea ?? 0))}
       ${optSlider('stress10', 'Stress', stressOf(e), 'Calm', 'Very stressed', 0, 10)}
       ${optSlider('mood10', 'Mood', moodOf(e), 'Low', 'Great', 0, 10)}
-      ${group('Right now I have… <span class="hint">only “Linked to IBD” counts in the score</span>', EXTRA_GROUPS.map(([g, title]) => { const items = EXTRA.filter(x => x.grp === g && (!x.cd || D().settings.condition === 'cd' || (e.extra || []).includes(x.id))); return `<div class="tag-group"><span class="sublbl">${title}</span>${chips('extra', items.map(x => x.label), e.extra || [], items.map(x => x.id))}</div>`; }).join(''))}
+      ${group('Right now I have… <span class="hint">only “Linked to IBD” counts in the score</span>', EXTRA_GROUPS.map(([g, title]) => { const items = EXTRA.filter(x => x.grp === g && (!x.cd || D().settings.condition === 'cd' || (e.extra || []).includes(x.id))); return `<div class="tag-group"><span class="sublbl">${title}</span>${chips('extra', items.map(x => x.label), e.extra || [], items.map(x => x.id))}</div>`; }).join('') + customSymptomBlock(e.extra || []))}
       <div class="row2">${field(`Weight (${wu})`, numInput('weight', e.weight, 'min="0" placeholder="Optional"'))}<span></span></div>
       ${noteField(e.note)}`,
     onSave: fd => {
@@ -2265,7 +2295,7 @@ async function exportCsv() {
     for (const x of d.exercise || []) add(date, x.t, 'Exercise', x.type, `${x.mins} min`, `${x.intensity}; steps ${x.steps ?? ''}; energy ${x.before ?? ''}→${x.after ?? ''}; symptoms: ${x.symptoms}`, x.note);
     const dsc = dayScore(d);
     if (dsc) add(date, '', 'Activity score', scoreDef().short, String(dsc.score), dsc.partial ? 'No check-in that day' : '', '');
-    for (const c of d.checkins || []) add(date, c.t, 'Check-in', WELLBEING[c.wellbeing ?? 0], '', `Belly pain ${c.pain}/10; tiredness ${c.fatigue}/10; stress ${stressOf(c) ?? ''}/10; mood ${moodOf(c) ?? ''}/10; bloating ${SEVERITY[c.bloating || 0].toLowerCase()}; nausea ${SEVERITY[c.nausea || 0].toLowerCase()}${c.tenesmus ? '; felt the need, nothing came' : ''}; ${(c.extra || []).map(id => (EXTRA.find(e => e.id === id) || {}).label).join(', ')}${c.weight ? `; weight ${c.weight} ${c.weightUnit || ''}` : ''}`, c.note);
+    for (const c of d.checkins || []) add(date, c.t, 'Check-in', WELLBEING[c.wellbeing ?? 0], '', `Belly pain ${c.pain}/10; tiredness ${c.fatigue}/10; stress ${stressOf(c) ?? ''}/10; mood ${moodOf(c) ?? ''}/10; bloating ${SEVERITY[c.bloating || 0].toLowerCase()}; nausea ${SEVERITY[c.nausea || 0].toLowerCase()}${c.tenesmus ? '; felt the need, nothing came' : ''}; ${(c.extra || []).map(extraLabel).join(', ')}${c.weight ? `; weight ${c.weight} ${c.weightUnit || ''}` : ''}`, c.note);
     for (const u of d.urges || []) add(date, u.t, 'Urge (nothing came)', '', '', `Urgency: ${URGENCY[u.urgency || 0]}; pain ${u.pain || 0}/10${u.night ? '; at night' : ''}`, u.note);
     if (d.period) add(date, '', 'Period', FLOW[d.period.flow || 0], '', (d.period.symptoms || []).join(', '), d.period.note);
     if (d.water) add(date, '', 'Water', 'Glasses', String(d.water), '', '');
@@ -2419,6 +2449,8 @@ const A = {
 
   rmPeriod() { const date = S.date, old = getDay(date).period; if (!old) return; mutDay(date, d => { d.period = null; }); toast('Deleted period entry', 'Undo', () => mutDay(date, d => { d.period = old; })); },
   addTag(el) { addCustomTag(el.closest('form')); },
+  addSym(el) { addCustomSymptom(el.closest('form')); },
+  rmSym(el) { const st = D().settings; st.customSymptoms = (st.customSymptoms || []).filter(t => t !== el.dataset.tag); saveSettings(); render(); },
   rmTag(el) { const st = D().settings; st.customTags = (st.customTags || []).filter(t => t !== el.dataset.tag); saveSettings(); render(); },
   openDay(el) { S.date = el.dataset.date; S.followToday = S.date === today(); S.tab = 'today'; render(); window.scrollTo(0, 0); },
   month(el) {
@@ -2514,6 +2546,7 @@ document.addEventListener('toggle', e => { const k = e.target.dataset && e.targe
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && sheetCtx) closeSheet();
   if (e.key === 'Enter' && e.target && e.target.id === 'f-newtag') { e.preventDefault(); addCustomTag(e.target.closest('form')); }
+  if (e.key === 'Enter' && e.target && e.target.id === 'f-newsym') { e.preventDefault(); addCustomSymptom(e.target.closest('form')); }
 });
 
 /* tooltip for calendar cells (mouse only) */
