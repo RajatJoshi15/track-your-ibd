@@ -124,7 +124,7 @@ const PRESETS = [
 
 /* ---------- state ---------- */
 const LS_KEY = 'ibd-tracker-v1';
-const DEFAULT_SETTINGS = { condition: null, waterGoal: 8, glassMl: 250, weightUnit: 'kg', favorites: [], sleepPending: null, started: false, lastBackup: null, backupEvery: 7, backupSnooze: null, installTipHidden: false, trackCycle: false, favDismissed: [], customTags: [], showAlcohol: true, showSmoking: true, customSymptoms: [], showMessages: true, keepSafetyNotes: true, ownMessages: [], ownMode: 'mix', reminderTimes: ['21:00'] };
+const DEFAULT_SETTINGS = { condition: null, waterGoal: 8, glassMl: 250, weightUnit: 'kg', favorites: [], sleepPending: null, started: false, lastBackup: null, backupEvery: 7, backupSnooze: null, installTipHidden: false, trackCycle: false, favDismissed: [], customTags: [], showAlcohol: true, showSmoking: true, customSymptoms: [], showMessages: true, keepSafetyNotes: true, ownMessages: [], ownMode: 'mix', reminderTimes: ['21:00'], foldedTrends: [], tipsSeen: [] };
 let R = { days: {}, meds: {}, settings: clone(DEFAULT_SETTINGS) };
 let SAMPLE = null;
 const D = () => SAMPLE || R;
@@ -448,30 +448,35 @@ const SCORES = {
 };
 const scoreKind = () => (D().settings.condition === 'cd' ? 'hbi' : 'sccai');
 const scoreDef = () => SCORES[scoreKind()];
+// Each part of the score is kept with what caused it, so Today can show "Why this score?".
 function dayScore(day) {
   if (!day) return null;
   const bm = day.bm || [], ci = dayCheckin(day);
   if (!bm.length && !ci) return null;
-  let s = 0;
+  const parts = [], add = (label, pts, detail) => parts.push({ label, pts, detail });
+  const noCi = 'No check-in yet';
+  const extras = key => (ci ? (ci.extra || []).filter(id => (EXTRA.find(e => e.id === id) || {})[key]) : []);
+  const feel = () => add('How you feel', ci ? ci.wellbeing ?? 0 : 0, ci && ci.wellbeing != null ? WELLBEING[ci.wellbeing] : noCi);
+  const other = key => { const x = extras(key); add('Other symptoms', x.length, x.length ? x.map(extraLabel).join(', ') : ci ? 'None' : noCi); };
   if (scoreKind() === 'hbi') {
-    s += ci ? ci.wellbeing ?? 0 : 0;
+    feel();
     const p = ci ? Math.round(ci.pain || 0) : 0;
-    s += p >= 7 ? 3 : p >= 4 ? 2 : p >= 1 ? 1 : 0;
-    s += bm.filter(b => (b.bristol || 0) >= 6).length;
-    if (ci) s += (ci.extra || []).filter(id => (EXTRA.find(e => e.id === id) || {}).hbi).length;
-    return { score: s, partial: !ci || ci.wellbeing == null, noBm: !bm.length };
+    add('Belly pain', p >= 7 ? 3 : p >= 4 ? 2 : p >= 1 ? 1 : 0, ci ? `${p} out of 10` : noCi);
+    const loose = bm.filter(b => (b.bristol || 0) >= 6).length;
+    add('Loose or watery stools (type 6–7)', loose, `${loose} of ${bm.length} ${plural(bm.length, 'trip', 'trips')}`);
+    other('hbi');
+  } else {
+    const nightN = bm.filter(b => b.night).length, dayN = bm.length - nightN;
+    add('Daytime bathroom trips', dayN >= 10 ? 3 : dayN >= 7 ? 2 : dayN >= 4 ? 1 : 0, `${dayN} ${plural(dayN, 'trip', 'trips')}`);
+    add('Trips that woke you at night', nightN >= 4 ? 2 : nightN >= 1 ? 1 : 0, `${nightN} ${plural(nightN, 'trip', 'trips')}`);
+    const urg = bm.reduce((mx, b) => Math.max(mx, b.urgency || 0), 0);
+    add('Urgency', urg, bm.length ? `Worst: ${URGENCY[urg].toLowerCase()}` : 'No trips logged');
+    const visible = bm.filter(b => (b.blood || 0) >= 2).length, streaks = bm.some(b => b.blood);
+    add('Blood', visible && visible / bm.length > 0.5 ? 3 : visible ? 2 : streaks ? 1 : 0, visible ? `Visible on ${visible} of ${bm.length} ${plural(bm.length, 'trip', 'trips')}` : streaks ? 'Streaks only' : 'None');
+    if (ci) feel(); else add('How you feel', 0, noCi);
+    other('sccai');
   }
-  const nightN = bm.filter(b => b.night).length, dayN = bm.length - nightN;
-  s += dayN >= 10 ? 3 : dayN >= 7 ? 2 : dayN >= 4 ? 1 : 0;
-  s += nightN >= 4 ? 2 : nightN >= 1 ? 1 : 0;
-  s += bm.reduce((mx, b) => Math.max(mx, b.urgency || 0), 0);
-  const visible = bm.filter(b => (b.blood || 0) >= 2).length;
-  s += visible && visible / bm.length > 0.5 ? 3 : visible ? 2 : bm.some(b => b.blood) ? 1 : 0;
-  if (ci) {
-    s += ci.wellbeing ?? 0;
-    s += (ci.extra || []).filter(id => (EXTRA.find(e => e.id === id) || {}).sccai).length;
-  }
-  return { score: s, partial: !ci || ci.wellbeing == null, noBm: !bm.length };
+  return { score: parts.reduce((a, x) => a + x.pts, 0), partial: !ci || ci.wellbeing == null, noBm: !bm.length, parts };
 }
 function band(s) {
   const c = scoreDef().cuts, labels = ['Low', 'Mild', 'Moderate', 'High'];
@@ -666,6 +671,7 @@ function render() {
   document.body.classList.toggle('onboarding', onboarding);
   $('#main').innerHTML = !S.ready ? '<p class="loading">Loading…</p>' : onboarding ? viewWelcome() : banners() + views[S.tab]();
   if (S.ready && S.tab === 'trends' && !onboarding) drawCharts();
+  initScrollFades($('#main'));
   document.querySelectorAll('#nav button[data-tab]').forEach(b => {
     if (b.dataset.tab === S.tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
@@ -736,9 +742,14 @@ function viewToday() {
     </div>
     <div class="col">
       ${medsDueCard(date)}
-      <section class="card"><div class="card-head"><h2>Timeline</h2><span class="muted">${isToday ? 'Today so far' : fmtDay(date)}</span></div>${timeline(date)}</section>
+      <section class="card"><div class="card-head"><h2>Timeline</h2><span class="muted">${isToday ? 'Today so far' : fmtDay(date)}</span></div>${tipBox('timeline', 'Tap any entry to change it, or ✕ to delete it. To fill in an earlier day, use the arrows next to the date.')}${timeline(date)}</section>
     </div>
   </div>`;
+}
+// A short hint shown once per screen, until "Got it" is tapped. Never shown with sample data.
+function tipBox(key, text) {
+  if (SAMPLE || !R.settings.started || (R.settings.tipsSeen || []).includes(key)) return '';
+  return `<div class="tip" role="note">${icon('sparkle')}<p>${text}</p><button type="button" class="btn small ghost" data-act="tipDone" data-k="${key}">Got it</button></div>`;
 }
 function welcomeCard() {
   return `<section class="card" style="margin-bottom:16px"><div class="card-head"><h2>Your log is ready</h2></div>
@@ -749,7 +760,7 @@ function gauge(score) {
   const def = scoreDef(), segs = def.segs, total = def.max + 1;
   const mark = score != null ? `<i class="mark" style="left:calc(${((Math.min(score, def.max) + 0.5) / total) * 100}% - 2px)"></i>` : '';
   return `<div class="gauge" aria-hidden="true">${segs.map((s, i) => `<span class="g${i}" style="flex:${s[0]}"></span>`).join('')}${mark}</div>
-    <div class="gauge-l" aria-hidden="true">${segs.map(s => `<span style="flex:${s[0]}">${s[1]}</span>`).join('')}</div>`;
+    <div class="gauge-l" aria-hidden="true">${segs.map(s => { const [name, range] = s[1].split(' '); return `<span style="flex:${s[0]}"><b>${name}</b>${range}</span>`; }).join('')}</div>`;
 }
 /* ---------- messages under "Estimated activity" (Today only) ---------- */
 // Picked by comparing today's score with the last 7 days. Wording rotates by date, so it stays the same all day.
@@ -888,12 +899,22 @@ function activityPanel(date) {
   return `<section class="activity" aria-label="Estimated ${scoreDef().short} ${sc.score}, ${b.label}">
     <div class="act-top">
       <div><span class="eyebrow">Estimated activity</span><div class="act-row"><span class="act-score">${sc.score}</span><span class="band b${b.i}">${b.label}</span><span class="act-scale">${scoreDef().short}, of ${scoreDef().max}</span></div></div>
-      <p class="act-note">${sc.partial ? 'Add an evening check-in to include how you feel.' : `Estimated ${scoreDef().long}. A guide to trends, not a diagnosis.`}</p>
+      <button type="button" class="why-btn" data-act="whyScore" aria-expanded="${!!S.why}">${S.why ? 'Hide details' : 'Why this score?'}</button>
     </div>
+    ${sc.partial ? '<p class="act-note">Add an evening check-in to include how you feel.</p>' : ''}
+    ${S.why ? whyScore(sc) : ''}
     ${gauge(sc.score)}
     ${msg.html ? `<div class="am-wrap">${msg.html}${msg.hideable ? '<button type="button" class="am-hide" data-act="hideMsgs">Hide</button>' : ''}</div>` : ''}
     <div class="facts">${facts.join('')}</div>
   </section>`;
+}
+// What each part of the score added, shown under the score when "Why this score?" is tapped.
+function whyScore(sc) {
+  const def = scoreDef();
+  return `<div class="why">
+    <ul>${sc.parts.map(x => `<li class="${x.pts ? '' : 'zero'}"><span><b>${x.label}</b><small>${esc(x.detail)}</small></span><span class="pts">${x.pts ? `+${fmtNum(x.pts)}` : '0'}</span></li>`).join('')}</ul>
+    <p class="hint">Estimated ${esc(def.long)} (${def.short}), out of ${def.max}. A guide to trends, not a diagnosis.${def.short === 'HBI' ? ' The doctor-checked part (a lump in the belly) is left out.' : ''}</p>
+  </div>`;
 }
 function quickGrid(date) {
   const day = getDay(date), isToday = date === today();
@@ -949,7 +970,7 @@ function sleepCard(date) {
       <div><span class="lbl">Asleep</span><b>${fmtDur(c.total)}</b></div>
       <div><span class="lbl">In bed</span><b class="mono">${fmtTime(sl.inBed)}–${fmtTime(sl.up || sl.wake)}</b></div>
       <div><span class="lbl">Fell asleep in</span><b>${fmtDur(c.latency)}</b></div>
-      <div><span class="lbl">Woke up</span><b>${c.wakeups}×</b><small>${c.trips} for the bathroom</small></div>
+      <div><span class="lbl">Woke up</span><b>${c.wakeups}×</b><small>${[c.trips ? `${c.trips} bathroom` : '', sl.pain ? `${sl.pain} pain` : '', sl.other ? `${sl.other} other` : ''].filter(Boolean).join(' · ') || 'Slept through'}</small></div>
     </div><div class="facts">${chips.join('')}</div>`;
   } else {
     body = `<p class="empty">No sleep logged for the night before ${isToday ? 'today' : fmtDay(date)}.</p>`;
@@ -1008,6 +1029,15 @@ function medsDueCard(date) {
     }).join('');
     const late = pending && ((isToday && toMin(t) < nowM - 60) || date < today());
     const label = late ? (isToday ? `${fmtTime(t)} · overdue` : `${fmtTime(t)} · not logged`) : fmtTime(t);
+    // A time where everything is logged folds to one line, so what's still due stands out.
+    const key = `slot:${date}|${t}`;
+    if (!pending) {
+      const logged = list.map(m => (day.doses || []).find(x => x.medId === m.id && x.slot === t));
+      const nt = logged.filter(x => x.status === 'taken').length, ns = logged.length - nt;
+      const sum = [nt ? `${nt} taken` : '', ns ? `${ns} skipped` : ''].filter(Boolean).join(', ');
+      if (!S.open[key]) return `<div class="slot"><button type="button" class="slot-sum" data-act="toggleSlot" data-k="${key}" aria-expanded="false">${icon('ok')}<span class="slot-time">${fmtTime(t)}</span><span class="slot-names">${sum} · ${esc(list.map(m => m.name).join(', '))}</span><span class="slot-show">Show</span></button></div>`;
+      return `<div class="slot"><div class="slot-head"><span class="slot-time">${label} · ${sum}</span><button type="button" class="btn small ghost" data-act="toggleSlot" data-k="${key}" aria-expanded="true">Hide</button></div><ul class="dose-list">${rows}</ul></div>`;
+    }
     return `<div class="slot"><div class="slot-head"><span class="slot-time ${late ? 'late' : ''}">${label}</span>${pending > 1 ? `<button class="btn small" data-act="takeAll" data-time="${t}">Take all ${pending}</button>` : ''}</div><ul class="dose-list">${rows}</ul></div>`;
   }).join('');
   const extras = (day.doses || []).filter(x => !used.has(x.id)).sort((a, b) => (a.t > b.t ? 1 : -1));
@@ -1040,8 +1070,12 @@ function timeline(date) {
     push(b.t, 'bm', `Bathroom${b.bristol ? ` · type ${b.bristol}` : ''}`, bits.join(' · '), `data-act="edit" data-kind="bm" data-id="${b.id}"`, rmBtn('bm', b.id, 'bathroom trip'));
   }
   for (const x of day.meals || []) {
-    const mac = MACROS.filter(([k]) => typeof x[k] === 'number').map(([k, label]) => `${label.toLowerCase()}: ${macroWord(k, x[k]).toLowerCase()}`).join(', ');
-    push(x.t, 'meal', `${esc(x.type || 'Meal')} · ${esc(x.desc)}`, esc([mac, (x.tags || []).map(tagLabel).join(', '), x.portion && x.portion !== 'Normal' ? x.portion.toLowerCase() + ' portion' : '', x.note].filter(Boolean).join(' · ')), `data-act="edit" data-kind="meal" data-id="${x.id}"`, rmBtn('meals', x.id, 'meal'));
+    // Ratings as four small bars; the words are kept for screen readers and the tooltip.
+    const rated = MACROS.filter(([k]) => typeof x[k] === 'number');
+    const words = rated.map(([k, label]) => `${label}: ${macroWord(k, x[k]).toLowerCase()}`).join(', ');
+    const bars = rated.length ? `<span class="tl-mac" role="img" aria-label="${esc(words)}" title="${esc(words)}" >${rated.map(([k, label, c]) => `<span class="${c}"><b>${label}</b><i><i style="width:${x[k] * 10}%"></i></i></span>`).join('')}</span>` : '';
+    const rest = esc([(x.tags || []).map(tagLabel).join(', '), x.portion && x.portion !== 'Normal' ? x.portion.toLowerCase() + ' portion' : '', x.note].filter(Boolean).join(' · '));
+    push(x.t, 'meal', `${esc(x.type || 'Meal')} · ${esc(x.desc)}`, bars + rest, `data-act="edit" data-kind="meal" data-id="${x.id}"`, rmBtn('meals', x.id, 'meal'));
   }
   for (const x of day.exercise || []) push(x.t, 'ex', `${esc(x.type)} · ${x.mins || 0} min`, esc([x.intensity, x.steps ? `${fmtNum(x.steps)} steps` : '', x.symptoms && x.symptoms !== 'None' ? x.symptoms.toLowerCase() : ''].filter(Boolean).join(' · ')), `data-act="edit" data-kind="ex" data-id="${x.id}"`, rmBtn('exercise', x.id, 'exercise'));
   for (const x of day.naps || []) push(x.t, 'nap', `Nap · ${x.mins} min`, esc(x.note || ''), `data-act="edit" data-kind="nap" data-id="${x.id}"`, rmBtn('naps', x.id, 'nap'));
@@ -1171,6 +1205,7 @@ function viewMeds() {
   const stoppedHtml = stopped.length ? `<details data-key="stopped" ${S.open.stopped ? 'open' : ''} style="margin-top:22px"><summary class="section-title" style="cursor:pointer">Stopped (${stopped.length})</summary><ul class="stopped-list">${stopped.map(m =>
     `<li><span><strong>${esc(m.name)}</strong> <span class="muted">stopped ${fmtDay(m.endDate)}</span></span><span class="btns"><button class="btn small ghost" data-act="restartMed" data-id="${m.id}">Restart</button><button class="btn small" data-act="editMed" data-id="${m.id}">Edit</button></span></li>`).join('')}</ul></details>` : '';
   return `<div class="pagehead"><h1>Medicines &amp; supplements</h1>${syncHtml()}</div>
+  ${active.length ? tipBox('meds', 'Today lists each dose when it’s due, with a Take button. Use Edit on a medicine to change its dose or schedule.') : ''}
   <div class="btns"><button class="btn primary" data-act="addMed">${icon('plus')}Add</button>${active.length ? `<button class="btn" data-act="new" data-kind="dose">Log a dose</button>` : ''}</div>
   ${sections || `<section class="card" style="margin-top:16px"><p class="empty">Nothing added yet. Add each medicine, vitamin and supplement once with its dose and schedule. You'll get a daily checklist on the Today tab.</p></section>`}
   ${stoppedHtml}`;
@@ -1287,6 +1322,7 @@ function viewMore() {
   const persisted = Store.persisted === true ? 'Your browser has agreed to keep this data.' : 'Install the app so your browser keeps this data.';
   return `<div class="pagehead"><h1>More</h1>${syncHtml()}</div>
   <div class="more">
+    <h2 class="group-title">Your data</h2>
     <section class="card"><div class="card-head"><h2>Your data</h2></div>
       ${SAMPLE ? `<p>You're viewing sample data. Nothing you change is saved.</p><div class="card-foot"><button class="btn primary" data-act="exitSample">${R.settings.started ? 'Back to my log' : 'Start my own log'}</button></div>`
         : `<p><strong>Everything stays on this device.</strong> There's no account and nothing is sent anywhere. Your phone and your computer each keep their own log. To move entries between them, save a backup on one and restore it on the other.</p><p class="muted">${persisted}</p>`}
@@ -1302,6 +1338,7 @@ function viewMore() {
       ${SAMPLE ? '' : `<label class="field" style="margin-top:14px;max-width:320px"><span class="lbl">Remind me to back up every</span><select id="s-backupEvery" name="backupEvery" form="settings-form">${[3, 7, 14, 30].map(d => `<option value="${d}" ${st.backupEvery === d ? 'selected' : ''}>${d} days</option>`).join('')}</select></label>`}
     </section>
     <section class="card"><div class="card-head"><h2>Install the app</h2></div>${installHelp()}</section>
+    <h2 class="group-title">Settings</h2>
     <section class="card"><div class="card-head"><h2>Settings</h2></div>
       <form id="settings-form" class="field">
         ${group('Condition', seg('condition', CONDITIONS.map(x => x[1]), st.condition || '', { values: CONDITIONS.map(x => x[0]) }) + `<span class="hint">Crohn's uses the Harvey-Bradshaw Index. The others use the colitis score (SCCAI).</span>`)}
@@ -1314,28 +1351,31 @@ function viewMore() {
           <label class="field"><span class="lbl">Weight unit</span><select id="s-weight" name="weightUnit"><option value="kg" ${st.weightUnit === 'kg' ? 'selected' : ''}>kg</option><option value="lb" ${st.weightUnit === 'lb' ? 'selected' : ''}>lb</option></select></label>
         </div>
       </form></section>
+    <section class="card">${aboutScore()}</section>
+    <h2 class="group-title">Reminders and messages</h2>
     ${SAMPLE ? '' : remindersCard()}
     <section class="card"><div class="card-head"><h2>Messages on Today</h2></div>
       <form id="messages-form" class="field">
         <label class="toggle"><input type="checkbox" name="showMessages" id="s-showmsg" ${st.showMessages !== false ? 'checked' : ''}><span>Show encouraging messages on Today</span></label>
         <label class="toggle"><input type="checkbox" name="keepSafetyNotes" id="s-safety" ${st.keepSafetyNotes !== false ? 'checked' : ''}><span>When messages are off, still show a short note on high or rising days</span></label>
         <div class="field" style="margin-top:6px"><span class="lbl">Your own messages <span class="hint">shown as a quote, signed “— Me”</span></span>
-          ${(st.ownMessages || []).length ? `<ul class="fav-list">${st.ownMessages.map((m, i) => `<li><span>“${esc(m)}”</span><button type="button" class="icon-btn small" data-act="rmOwnMsg" data-i="${i}" aria-label="Remove this message">${icon('x')}</button></li>`).join('')}</ul>` : '<p class="empty">Add words that help you, for example “One day at a time.”</p>'}
+          ${(st.ownMessages || []).length ? `<ul class="fav-list scroll-list" data-fade>${st.ownMessages.map((m, i) => `<li><span>“${esc(m)}”</span><button type="button" class="icon-btn small" data-act="rmOwnMsg" data-i="${i}" aria-label="Remove this message">${icon('x')}</button></li>`).join('')}</ul>` : '<p class="empty">Add words that help you, for example “One day at a time.”</p>'}
           <div class="inline add-tag" style="max-width:none"><input type="text" id="f-ownmsg" maxlength="140" placeholder="Add a message that helps you" autocomplete="off" aria-label="New message"><button type="button" class="btn small" data-act="addOwnMsg">Add</button></div>
         </div>
         ${(st.ownMessages || []).length ? group('How to use them', seg('ownMode', ['Mix them in with the app’s messages', 'Only show my own messages'], st.ownMode || 'mix', { values: ['mix', 'only'] })) : ''}
       </form></section>
+    <h2 class="group-title">Your lists</h2>
     <section class="card"><div class="card-head"><h2>Favourite meals</h2></div>
-      ${favs.length ? `<ul class="fav-list">${favs.map((f, i) => `<li><span>${esc(f.desc)} <span class="muted">${esc((f.tags || []).map(tagLabel).join(', '))}</span></span><button class="icon-btn small" data-act="rmFav" data-i="${i}" aria-label="Remove ${esc(f.desc)}">${icon('x')}</button></li>`).join('')}</ul>` : '<p class="empty">Meals you log 3 times within a couple of weeks are added here automatically. You can also tick “Save to favourites” when logging a meal.</p>'}
+      ${favs.length ? `<ul class="fav-list scroll-list" data-fade>${favs.map((f, i) => `<li><span>${esc(f.desc)} <span class="muted">${esc((f.tags || []).map(tagLabel).join(', '))}</span></span><button class="icon-btn small" data-act="rmFav" data-i="${i}" aria-label="Remove ${esc(f.desc)}">${icon('x')}</button></li>`).join('')}</ul>` : '<p class="empty">Meals you log 3 times within a couple of weeks are added here automatically. You can also tick “Save to favourites” when logging a meal.</p>'}
     </section>
     <section class="card"><div class="card-head"><h2>Your food tags</h2></div>
-      ${(st.customTags || []).length ? `<ul class="fav-list">${st.customTags.map(t => `<li><span>${esc(t)}</span><button class="icon-btn small" data-act="rmTag" data-tag="${esc(t)}" aria-label="Remove ${esc(t)}">${icon('x')}</button></li>`).join('')}</ul><p class="hint" style="margin-top:8px">Removing a tag keeps it on meals you already logged.</p>` : '<p class="empty">Add your own tags from the meal form, for example a food you suspect.</p>'}
+      ${(st.customTags || []).length ? `<ul class="fav-list scroll-list" data-fade>${st.customTags.map(t => `<li><span>${esc(t)}</span><button class="icon-btn small" data-act="rmTag" data-tag="${esc(t)}" aria-label="Remove ${esc(t)}">${icon('x')}</button></li>`).join('')}</ul><p class="hint" style="margin-top:8px">Removing a tag keeps it on meals you already logged.</p>` : '<p class="empty">Add your own tags from the meal form, for example a food you suspect.</p>'}
     </section>
     <section class="card"><div class="card-head"><h2>Your check-in tags</h2></div>
-      ${(st.customSymptoms || []).length ? `<ul class="fav-list">${st.customSymptoms.map(t => `<li><span>${esc(t)}</span><button class="icon-btn small" data-act="rmSym" data-tag="${esc(t)}" aria-label="Remove ${esc(t)}">${icon('x')}</button></li>`).join('')}</ul><p class="hint" style="margin-top:8px">Removing a tag keeps it on check-ins you already logged. Your own tags don't count in the activity score.</p>` : '<p class="empty">Add your own tags from the check-in form, for example a symptom that isn\'t listed.</p>'}
+      ${(st.customSymptoms || []).length ? `<ul class="fav-list scroll-list" data-fade>${st.customSymptoms.map(t => `<li><span>${esc(t)}</span><button class="icon-btn small" data-act="rmSym" data-tag="${esc(t)}" aria-label="Remove ${esc(t)}">${icon('x')}</button></li>`).join('')}</ul><p class="hint" style="margin-top:8px">Removing a tag keeps it on check-ins you already logged. Your own tags don't count in the activity score.</p>` : '<p class="empty">Add your own tags from the check-in form, for example a symptom that isn\'t listed.</p>'}
     </section>
-    <section class="card">${aboutScore()}</section>
-    ${SAMPLE ? '' : `<section class="card"><div class="card-head"><h2>Sample data</h2></div><p>See what three months of logging looks like without touching your own entries.</p><div class="card-foot"><button class="btn" data-act="enterSample">Look around with sample data</button></div></section>
+    ${SAMPLE ? '' : `<h2 class="group-title">Other</h2>
+    <section class="card"><div class="card-head"><h2>Sample data</h2></div><p>See what three months of logging looks like without touching your own entries.</p><div class="card-foot"><button class="btn" data-act="enterSample">Look around with sample data</button></div></section>
     <section class="card danger-zone"><div class="card-head"><h2>Delete all data</h2></div><p>Erase every entry, medicine and setting on this device. Save a backup first if you might want them back. This can't be undone.</p><div class="card-foot"><button class="btn danger" data-act="deleteAll">Delete everything on this device</button></div></section>`}
     <p class="hint">IBD Tracker is a personal log. It doesn't give medical advice. Talk to your doctor before changing your treatment, and get urgent help for heavy bleeding, severe pain, high fever or signs of dehydration. <a href="privacy.html">Privacy</a></p>
   </div>`;
@@ -1418,6 +1458,7 @@ function viewTrends() {
   const ranges = [[14, '2 weeks'], [30, '1 month'], [90, '3 months']];
   const hasAny = rows.some(r => r.score != null || r.trips || r.sleep != null || r.water || r.drinks || r.cigs || MACROS.some(([k]) => r[k] != null));
   return `<div class="pagehead"><h1>Trends</h1><div class="segbtns" role="group" aria-label="Time range">${ranges.map(([d, l]) => `<button type="button" data-act="trendRange" data-n="${d}" aria-pressed="${d === n}">${l}</button>`).join('')}</div></div>
+  ${tipBox('trends', 'Each card starts with a short summary in plain words. Tap a bar or point on a chart to see its numbers, and tap a card’s title to fold it away.')}
   <div class="trends">
     <div class="tiles">
       ${tile(`Average ${def.short}`, avg != null ? `${fmtNum(avg)} <span class="band b${b.i}">${b.label}</span>` : '–', avg != null ? cmp || `${scores.length} ${plural(scores.length, 'day', 'days')} scored` : 'Log symptoms to see this')}
@@ -1426,24 +1467,50 @@ function viewTrends() {
       ${tile('Doses taken', due ? `${Math.round((taken / due) * 100)}%` : '–', due ? `${taken} of ${due} scheduled` : '')}
     </div>
     ${hasAny ? '' : '<section class="card"><p class="empty">Nothing logged in this period yet. Charts fill in as you log bathroom trips, check-ins, sleep and meals.</p></section>'}
-    <section class="card"><div class="card-head"><h2>${def.short} activity score</h2><span class="muted">${esc(def.long)}, estimated</span></div>${scoreHeadline(rows)}<div class="chart" data-chart="score" aria-label="Chart of daily activity score"></div>
-      <div class="chart-legend">${def.legend.map((l, i) => `<span><i class="b${i}"></i>${l}</span>`).join('')}${D().settings.trackCycle ? '<span><i class="period-swatch"></i>Period days</span>' : ''}</div>${periodCompare(rows)}</section>
+    ${hasAny ? standOutCard(rows) : ''}
+    ${tCard('score', `<h2>${def.short} activity score</h2>`, `<span class="muted">${esc(def.long)}, estimated</span>`, `${scoreHeadline(rows)}<div class="chart" data-chart="score" aria-label="Chart of daily activity score"></div>
+      <div class="chart-legend">${def.legend.map((l, i) => `<span><i class="b${i}"></i>${l}</span>`).join('')}${D().settings.trackCycle ? '<span><i class="period-swatch"></i>Period days</span>' : ''}</div>${periodCompare(rows)}`)}
     <div class="pair">
-      <section class="card"><div class="card-head"><h2>Bathroom trips</h2><span class="muted">per day</span></div>${bathroomHeadline(rows)}<div class="chart" data-chart="trips" aria-label="Chart of bathroom trips per day"></div>
-        <div class="chart-legend"><span><i style="background:var(--bar-neutral)"></i>Trips</span><span><i style="background:var(--blood)"></i>With blood</span></div></section>
-      <section class="card"><div class="card-head"><h2>Sleep</h2><span class="muted">hours asleep</span></div>${sleepHeadline(rows)}<div class="chart" data-chart="sleep" aria-label="Chart of hours slept per night"></div>
-        <div class="chart-legend"><span><i style="background:var(--c-sleep)"></i>Hours asleep</span><span><i class="line" style="background:var(--muted)"></i>7-hour line</span></div></section>
+      ${tCard('trips', '<h2>Bathroom trips</h2>', '<span class="muted">per day</span>', `${bathroomHeadline(rows)}<div class="chart" data-chart="trips" aria-label="Chart of bathroom trips per day"></div>
+        <div class="chart-legend"><span><i style="background:var(--bar-neutral)"></i>Trips</span><span><i style="background:var(--blood)"></i>With blood</span></div>`)}
+      ${tCard('sleepchart', '<h2>Sleep</h2>', '<span class="muted">hours asleep</span>', `${sleepHeadline(rows)}<div class="chart" data-chart="sleep" aria-label="Chart of hours slept per night"></div>
+        <div class="chart-legend"><span><i style="background:var(--c-sleep)"></i>Hours asleep</span><span><i class="line" style="background:var(--muted)"></i>7-hour line</span></div>`)}
     </div>
-    <section class="card"><div class="card-head"><h2>Carbs, protein, fat and fibre</h2><span class="muted">average meal rating, 1–10</span></div>${macroHeadline(rows)}<div class="chart" data-chart="food" aria-label="Chart of daily carbs, protein, fat and fibre ratings"></div>
-      <div class="chart-legend">${MACROS.map(([, l], i) => `<span><i class="line" style="background:var(--s${i + 1})"></i>${l}</span>`).join('')}</div></section>
+    ${tCard('macros', '<h2>Carbs, protein, fat and fibre</h2>', '<span class="muted">average meal rating, 1–10</span>', `${macroHeadline(rows)}<div class="chart" data-chart="food" aria-label="Chart of daily carbs, protein, fat and fibre ratings"></div>
+      <div class="chart-legend">${MACROS.map(([, l], i) => `<span><i class="line" style="background:var(--s${i + 1})"></i>${l}</span>`).join('')}</div>`)}
     ${habitsCard(rows)}
-    <section class="card"><div class="card-head"><h2>Food, drinks and next-day symptoms</h2></div>${triggerTable(rows)}</section>
-    <section class="card"><div class="card-head"><h2>Meals and symptoms a few hours later</h2>${symptomPicker()}</div>${mealSymptomBlock()}</section>
-    <section class="card"><div class="card-head"><h2>Meal and medicine timing</h2></div>${afterMealStats(rows)}${timingTable(rows)}</section>
-    <section class="card"><div class="card-head"><h2>Sleep and next-day symptoms</h2></div>${sleepTable(rows)}</section>
-    <section class="card"><div class="card-head"><h2>Time of day</h2><span class="muted">when symptoms show up</span></div>${timeOfDayBlock(rows)}</section>
+    ${tCard('food', '<h2>Food, drinks and next-day symptoms</h2>', '', triggerTable(rows))}
+    ${tCard('meals', '<h2>Meals and symptoms a few hours later</h2>', symptomPicker(), mealSymptomBlock())}
+    ${tCard('timing', '<h2>Meal and medicine timing</h2>', '', afterMealStats(rows) + timingTable(rows))}
+    ${tCard('sleep', '<h2>Sleep and next-day symptoms</h2>', '', sleepTable(rows))}
+    ${tCard('tod', '<h2>Time of day</h2>', '<span class="muted">when symptoms show up</span>', timeOfDayBlock(rows))}
     <section class="card"><details data-key="dailyTable" ${S.open.dailyTable ? 'open' : ''}><summary class="section-title" style="cursor:pointer">Daily numbers</summary>${dailyTable(rows)}</details></section>
   </div>`;
+}
+// The strongest next-day patterns from food and drinks, timing and sleep, each linking to its card.
+// Ranked by how sure we are, then by size. Alcohol and smoking are never described as helping.
+function standOutCard(rows) {
+  const m = nextDayMetric(), rank = { 'Strong pattern': 3, 'Likely pattern': 2, 'Early hint': 1 };
+  const groups = [['food', 'Food and drinks', patternData(rows, triggerTests())], ['timing', 'Meal and medicine timing', patternData(rows, timingTests())], ['sleep', 'Sleep', patternData(rows, sleepTests(rows), true)]];
+  const found = [];
+  for (const [card, name, res] of groups) for (const o of res.out) {
+    const cls = impactClass(o.d, m.flat);
+    if (cls === 'flat' || (cls === 'down' && o.noPraise)) continue;
+    const conf = confidence(o.n, o.d, m.scale);
+    found.push({ card, name, o, cls, conf, r: rank[conf] * 100 + Math.abs(o.d) });
+  }
+  const top = found.sort((a, b) => b.r - a.r).slice(0, 3);
+  const body = top.length
+    ? `<ul class="standout">${top.map(f => `<li class="${f.cls}"><span class="conf">${f.conf}</span><p>${esc(f.cls === 'up' ? m.worse(f.o) : m.better(f.o))}</p><button type="button" class="link-btn" data-act="jumpCard" data-k="${f.card}">See ${f.name.toLowerCase()} ${icon('right')}</button></li>`).join('')}</ul>
+      <p class="hint" style="margin-top:8px">Patterns in your own log, not proof of cause. Talk to your doctor before changing food or medicines.</p>`
+    : '<p class="empty">Nothing stands out yet. After a couple of weeks of logging meals, sleep and symptoms, the clearest patterns show up here.</p>';
+  return tCard('standout', '<h2>What stands out</h2>', '<span class="muted">next-day patterns</span>', body);
+}
+// A Trends card that can fold away. Folded cards are remembered on this device.
+function tCard(key, title, sub, body, cls = '') {
+  const folded = (D().settings.foldedTrends || []).includes(key);
+  const head = title.replace(/^<h2>(.*)<\/h2>$/, (_, t) => `<h2><button type="button" class="fold-head" data-act="foldCard" data-k="${key}" aria-expanded="${!folded}">${t}${icon('right')}</button></h2>`);
+  return `<section class="card tcard ${folded ? 'folded' : ''} ${cls}" id="tr-${key}"><div class="card-head">${head}${folded ? '' : sub}</div>${folded ? '' : body}</section>`;
 }
 function periodCompare(rows) {
   if (!D().settings.trackCycle) return '';
@@ -1542,7 +1609,7 @@ function foodTests(applies) {
   return tags.map(t => ({ label: tagLabel(t), say: `after meals tagged “${tagLabel(t)}”`, noPraise: t === 'Alcohol', has: r => r.tags.has(t), applies }))
     .concat(MACROS.map(([k, l]) => ({ label: `A lot of ${l.toLowerCase()} (6+)`, say: `after meals with a lot of ${l.toLowerCase()}`, has: r => r[k] != null && r[k] >= 6, applies })));
 }
-function triggerTable(rows) {
+function triggerTests() {
   const ate = r => r.tags.size || MACROS.some(([k]) => r[k] != null) || r.drinks || r.cigs;
   const st = D().settings, tests = foodTests(ate);
   if (st.showAlcohol !== false) tests.push({ label: 'Any alcohol', say: 'after drinking alcohol', noPraise: true, has: r => r.drinks > 0 || r.tags.has('Alcohol'), applies: ate }, { label: '3 or more drinks', say: 'after 3 or more drinks', noPraise: true, has: r => r.drinks >= 3, applies: ate });
@@ -1550,7 +1617,10 @@ function triggerTable(rows) {
   const goal = st.waterGoal || 8, drank = r => r.water > 0;
   tests.push({ label: `Below your water goal (under ${goal} glasses)`, say: 'after drinking less water than your goal', noPraise: true, has: r => r.water < goal, applies: drank },
     { label: '2 or fewer glasses of water', say: 'after days with 2 or fewer glasses of water', noPraise: true, has: r => r.water <= 2, applies: drank });
-  return patternBlock('tblFood', rows, tests, {
+  return tests;
+}
+function triggerTable(rows) {
+  return patternBlock('tblFood', rows, triggerTests(), {
     heading: 'What you had',
     emptyMsg: 'Keep logging meals and symptoms for a couple of weeks. This then compares your next-day score after different foods.',
     noneMsg: 'Not enough tagged meals yet. Add tags and food ratings when you log meals.',
@@ -1558,9 +1628,9 @@ function triggerTable(rows) {
     note: 'Patterns in your own log, not proof that a food causes symptoms. Talk to your doctor or dietitian before cutting foods out.',
   });
 }
-function timingTable(rows) {
+function timingTests() {
   const meals2 = r => r.mealCount >= 2, meals1 = r => r.mealCount >= 1, doses = r => r.hadDoses;
-  const tests = [
+  return [
     { label: 'A gap of 5+ hours between meals', say: 'after a gap of 5+ hours between meals', has: r => r.gapMax >= 300, applies: meals2 },
     { label: 'First meal after 11 AM', say: 'after a late first meal (after 11 AM)', has: r => r.firstMeal >= 660, applies: meals1 },
     { label: 'Ate within 2 hours of bed (or after 9 PM)', say: 'after eating close to bedtime', has: r => r.lateMeal === true, applies: r => r.lateMeal != null },
@@ -1569,7 +1639,9 @@ function timingTable(rows) {
     { label: 'A medicine taken against its food instructions', say: 'after taking a medicine against its food instructions', has: r => r.foodOff, applies: r => r.hadDoses && r.mealCount >= 1 },
     { label: 'Uneven gap between doses of the same medicine', say: 'after uneven gaps between doses', has: r => r.uneven, applies: doses },
   ];
-  return patternBlock('tblTiming', rows, tests, {
+}
+function timingTable(rows) {
+  return patternBlock('tblTiming', rows, timingTests(), {
     heading: 'What happened',
     emptyMsg: 'Keep logging meals, doses and symptoms for a couple of weeks. This then shows whether meal gaps or dose timing line up with a higher score the next day.',
     noneMsg: 'No clear timing patterns yet. Keep logging meals and doses with their times.',
@@ -1578,11 +1650,13 @@ function timingTable(rows) {
   });
 }
 // Each night is compared with the score of the day that follows it, which is the day the night is stored on.
-function sleepTable(rows) {
-  const nights = rows.filter(r => r.sl), beds = nights.map(r => r.sl.bed).sort((a, b) => a - b);
-  const usual = beds.length ? beds[Math.floor(beds.length / 2)] : null;
-  const has = r => !!r.sl;
-  const tests = [
+function usualBedtime(rows) {
+  const beds = rows.filter(r => r.sl).map(r => r.sl.bed).sort((a, b) => a - b);
+  return beds.length ? beds[Math.floor(beds.length / 2)] : null;
+}
+function sleepTests(rows) {
+  const usual = usualBedtime(rows), has = r => !!r.sl;
+  return [
     { label: 'Under 6 hours asleep', say: 'after nights under 6 hours', has: r => r.sl.total < 360, applies: has },
     { label: 'Under 7 hours asleep', say: 'after nights under 7 hours', has: r => r.sl.total < 420, applies: has },
     { label: 'Took 30+ minutes to fall asleep', say: 'after taking 30+ minutes to fall asleep', has: r => r.sl.latency >= 30, applies: has },
@@ -1592,6 +1666,9 @@ function sleepTable(rows) {
     { label: 'Went to bed after midnight', say: 'after going to bed after midnight', has: r => r.sl.bed >= 0, applies: has },
     { label: 'Bedtime an hour or more off your usual', say: 'after a bedtime an hour or more off your usual', has: r => Math.abs(r.sl.bed - usual) >= 60, applies: r => has(r) && usual != null },
   ];
+}
+function sleepTable(rows) {
+  const nights = rows.filter(r => r.sl), usual = usualBedtime(rows), tests = sleepTests(rows);
   const intro = usual != null && nights.length >= 5 ? `<p class="hint" style="margin-bottom:8px">Your usual bedtime is around ${fmtTime(fromMin(usual))}.</p>` : '';
   return intro + patternBlock('tblSleep', rows, tests, {
     heading: 'The night before', sameDay: true,
@@ -1858,12 +1935,11 @@ function chartFood(el, rows) {
 // ---------- water, alcohol and smoking ----------
 function habitsCard(rows) {
   const st = D().settings, showA = st.showAlcohol !== false, showS = st.showSmoking !== false, goal = st.waterGoal || 8;
-  return `<section class="card"><div class="card-head"><h2>Water${showA ? ', alcohol' : ''}${showS ? ' and smoking' : ''}</h2></div>${habitsHeadline(rows)}
+  return tCard('habits', `<h2>Water${showA ? ', alcohol' : ''}${showS ? ' and smoking' : ''}</h2>`, '', `${habitsHeadline(rows)}
     <p class="sublbl chart-title">Water, glasses a day</p><div class="chart chart-sm" data-chart="water" aria-label="Chart of glasses of water per day"></div>
     <div class="chart-legend"><span><i style="background:var(--c-water)"></i>Glasses</span><span><i class="line" style="background:var(--muted)"></i>Your goal (${goal})</span></div>
     ${showA ? '<p class="sublbl chart-title">Alcohol, drinks a day</p><div class="chart chart-sm" data-chart="drinks" aria-label="Chart of alcoholic drinks per day"></div>' : ''}
-    ${showS ? '<p class="sublbl chart-title">Smoking, cigarettes a day</p><div class="chart chart-sm" data-chart="cigs" aria-label="Chart of cigarettes per day"></div>' : ''}
-  </section>`;
+    ${showS ? '<p class="sublbl chart-title">Smoking, cigarettes a day</p><div class="chart chart-sm" data-chart="cigs" aria-label="Chart of cigarettes per day"></div>' : ''}`);
 }
 function habitsHeadline(rows) {
   const st = D().settings, goal = st.waterGoal || 8, parts = [];
@@ -1936,6 +2012,15 @@ function openSheet({ title, body, onSave, onDelete, onInput, saveLabel = 'Save',
   applyWhen(form);
   if (onInput) onInput(form, null);
   requestAnimationFrame(() => form.focus({ preventScroll: true }));
+}
+// Lists with a height limit scroll; the bottom edge fades while there's more below.
+function initScrollFades(root) {
+  if (!root) return;
+  root.querySelectorAll('[data-fade]').forEach(x => {
+    const upd = () => x.classList.toggle('has-more', x.scrollTop + x.clientHeight < x.scrollHeight - 2);
+    upd();
+    if (!x.dataset.fadeOn) { x.dataset.fadeOn = '1'; x.addEventListener('scroll', upd, { passive: true }); }
+  });
 }
 function closeSheet() {
   const root = $('#sheet');
@@ -2464,8 +2549,8 @@ function sheetMeal(date, entry) {
   const yday = entry ? [] : ((D().days[addDays(date, -1)] || {}).meals || []).filter(x => x.desc && !loggedHere.has(mealKey(x.desc))).sort((a, b) => (a.t || '').localeCompare(b.t || ''));
   openSheet({
     title: entry ? 'Edit meal' : 'Meal or drink',
-    body: `${yday.length ? group('From yesterday', `<div class="favs">${yday.map(m => `<button type="button" class="chip-btn" data-act="useYday" data-id="${m.id}">${esc(m.type ? `${m.type} · ${m.desc}` : m.desc)}</button>`).join('')}</div>`) : ''}
-      ${!entry && favs.length ? group('Favourites', `<div class="favs">${favs.map((f, i) => `<button type="button" class="chip-btn" data-act="useFav" data-i="${i}">${esc(f.desc)}</button>`).join('')}</div>`) : ''}
+    body: `${yday.length ? group('From yesterday', `<div class="favs" data-fade>${yday.map(m => `<button type="button" class="chip-btn" data-act="useYday" data-id="${m.id}">${esc(m.type ? `${m.type} · ${m.desc}` : m.desc)}</button>`).join('')}</div>`) : ''}
+      ${!entry && favs.length ? group('Favourites', `<div class="favs" data-fade>${favs.map((f, i) => `<button type="button" class="chip-btn" data-act="useFav" data-i="${i}">${esc(f.desc)}</button>`).join('')}</div>`) : ''}
       ${!entry && (yday.length || favs.length) ? '<p class="hint" style="margin-top:-6px">Tap one to fill the form with everything you logged then.</p>' : ''}
       <div class="row2">${field('Time', timeInput('t', e.t))}${field('Portion', `<select name="portion" id="f-portion">${PORTIONS.map(p => `<option ${p === e.portion ? 'selected' : ''}>${p}</option>`).join('')}</select>`)}</div>
       ${group('Type', seg('type', MEAL_TYPES, e.type, { values: MEAL_TYPES }))}
@@ -2493,11 +2578,7 @@ function sheetMeal(date, entry) {
     },
     onDelete: entry ? () => removeEntry(date, 'meals', e.id, 'meal') : null,
   });
-  // Long chip lists stop at 4 lines and scroll; the bottom edge fades while there's more below.
-  document.querySelectorAll('#sheet .favs').forEach(x => {
-    const upd = () => x.classList.toggle('has-more', x.scrollTop + x.clientHeight < x.scrollHeight - 2);
-    upd(); x.addEventListener('scroll', upd, { passive: true });
-  });
+  initScrollFades($('#sheet'));
 }
 
 // Tags people make themselves. They're kept in settings so they show up on every meal.
@@ -2732,6 +2813,35 @@ function sheetDoseGroup(date, ids) {
 }
 
 /* ---------- sleep ---------- */
+// A 0–10 count picked by swiping a vertical wheel (or tapping a number, or arrow keys). The value goes in a hidden input.
+const WHEEL_H = 40;
+function wheel(name, label, value, max = 10) {
+  const top = Math.max(max, value);
+  return `<div class="field wheel-field"><span class="lbl" id="l-${name}">${label}</span>
+    <div class="wheel" data-wheel="${name}" tabindex="0" role="spinbutton" aria-labelledby="l-${name}" aria-valuemin="0" aria-valuemax="${top}" aria-valuenow="${value}">
+      <div class="wheel-band" aria-hidden="true"></div><div class="wheel-pad"></div>${Array.from({ length: top + 1 }, (_, i) => `<div class="wheel-item ${i === value ? 'on' : ''}" data-v="${i}">${i}</div>`).join('')}<div class="wheel-pad"></div>
+    </div><input type="hidden" name="${name}" value="${value}"></div>`;
+}
+function initWheels(root) {
+  root.querySelectorAll('[data-wheel]').forEach(w => {
+    const input = w.parentElement.querySelector('input[type=hidden]'), items = [...w.querySelectorAll('.wheel-item')];
+    const set = i => {
+      i = clamp(i, 0, items.length - 1);
+      if (String(i) === input.value) return;
+      input.value = i; w.setAttribute('aria-valuenow', i);
+      items.forEach(x => x.classList.toggle('on', Number(x.dataset.v) === i));
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const go = i => w.scrollTo({ top: clamp(i, 0, items.length - 1) * WHEEL_H, behavior: 'smooth' });
+    w.scrollTop = Number(input.value) * WHEEL_H;
+    w.addEventListener('scroll', () => set(Math.round(w.scrollTop / WHEEL_H)), { passive: true });
+    w.addEventListener('click', e => { const it = e.target.closest('.wheel-item'); if (it) go(Number(it.dataset.v)); });
+    w.addEventListener('keydown', e => {
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault(); const i = Number(input.value) + (e.key === 'ArrowDown' ? 1 : -1); go(i); set(i);
+    });
+  });
+}
 function sheetSleep(date, prefill) {
   const cur = getDay(date).sleep, last = lastSleep(date);
   const base = cur || Object.assign({ inBed: '23:00', asleep: '23:20', wake: '07:00', up: '07:10' }, last ? { inBed: last.inBed, asleep: last.asleep, wake: last.wake, up: last.up } : {});
@@ -2743,7 +2853,8 @@ function sheetSleep(date, prefill) {
       <p class="calc" data-calc></p>
       ${group('Sleep quality', scale5('quality', s.quality, 'very poor', 'great'))}
       ${optSlider('morning', 'How do you feel after waking up?', morningScore(s), 'Drowsy, groggy', 'Calm, alert', 0, 10)}
-      <div class="row2">${field('Woke from pain', numInput('pain', s.pain, 'min="0" max="20" step="1"'))}${field('Woke for other reasons', numInput('other', s.other, 'min="0" max="20" step="1"'))}</div>
+      <div class="row2 wheels">${wheel('pain', 'Woke from pain', s.pain || 0)}${wheel('other', 'Woke for other reasons', s.other || 0)}</div>
+      <p class="wake-total" data-wake-total></p>
       ${auto.length ? group('From your log the evening before', `<div class="info-chips">${auto.map(a => `<span class="fact">${esc(a)}</span>`).join('')}</div>`) : ''}
       ${group('Before bed', chips('factor', BEFORE_BED.map(x => x[1]), s.factors || [], BEFORE_BED.map(x => x[0])))}
       ${group('During the night', chips('factor', DURING_NIGHT.map(x => x[1]), s.factors || [], DURING_NIGHT.map(x => x[0])))}
@@ -2752,8 +2863,12 @@ function sheetSleep(date, prefill) {
       const v = n => form.elements[n].value;
       const c = sleepCalc(date, { inBed: v('inBed'), asleep: v('asleep'), wake: v('wake'), up: v('up') });
       const out = form.querySelector('[data-calc]');
-      if (!c || c.total <= 0) { out.textContent = 'Waking up should come after falling asleep.'; return; }
-      out.textContent = `${fmtDur(c.total)} asleep · ${fmtDur(c.inBedDur)} in bed · fell asleep in ${fmtDur(c.latency)}${c.eff != null ? ` · ${c.eff}% asleep` : ''} · ${c.trips} bathroom ${plural(c.trips, 'trip', 'trips')} logged overnight`;
+      const tot = form.querySelector('[data-wake-total]');
+      if (!c || c.total <= 0) { out.textContent = 'Waking up should come after falling asleep.'; tot.textContent = ''; return; }
+      out.textContent = `${fmtDur(c.total)} asleep · ${fmtDur(c.inBedDur)} in bed · fell asleep in ${fmtDur(c.latency)}${c.eff != null ? ` · ${c.eff}% asleep` : ''}`;
+      const pain = Number(v('pain')) || 0, other = Number(v('other')) || 0, n = c.trips + pain + other;
+      const parts = [c.trips ? `${c.trips} for the bathroom (from your log)` : '', pain ? `${pain} from pain` : '', other ? `${other} for other reasons` : ''].filter(Boolean);
+      tot.textContent = n ? `You woke up ${n} ${plural(n, 'time', 'times')} in total: ${parts.join(', ')}.` : 'No wake-ups: you slept through.';
     },
     onSave: fd => {
       const x = { inBed: fd.get('inBed'), asleep: fd.get('asleep') || fd.get('inBed'), wake: fd.get('wake'), up: fd.get('up') || fd.get('wake'), quality: Number(fd.get('quality')) || null, morning: fd.get('morning') === '' || fd.get('morning') == null ? null : Number(fd.get('morning')), pain: num(fd.get('pain')) || 0, other: num(fd.get('other')) || 0, factors: fd.getAll('factor'), note: (fd.get('note') || '').trim() };
@@ -2766,6 +2881,7 @@ function sheetSleep(date, prefill) {
     },
     onDelete: cur ? () => { const old = cur; mutDay(date, d => { d.sleep = null; }); toast('Deleted night', 'Undo', () => mutDay(date, d => { d.sleep = old; })); } : null,
   });
+  initWheels($('#sheet'));
 }
 
 /* ---------- medicine editor ---------- */
@@ -3120,6 +3236,20 @@ const A = {
     const times = (D().settings.reminderTimes || []).filter(t => toMin(t) != null);
     if (times.length) saveFile('ibd-tracker-check-in-reminders.ics', remindersIcs(times), 'text/calendar', false);
   },
+  whyScore() { S.why = !S.why; render(); },
+  toggleSlot(el) { const k = el.dataset.k; S.open[k] = !S.open[k]; render(); },
+  foldCard(el) {
+    const st = D().settings, k = el.dataset.k, list = (st.foldedTrends || []).filter(x => x !== k);
+    st.foldedTrends = list.length === (st.foldedTrends || []).length ? list.concat(k) : list;
+    saveSettings(); render();
+  },
+  jumpCard(el) {
+    const st = D().settings, k = el.dataset.k;
+    if ((st.foldedTrends || []).includes(k)) { st.foldedTrends = st.foldedTrends.filter(x => x !== k); saveSettings(); render(); }
+    const card = document.getElementById('tr-' + k);
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  },
+  tipDone(el) { const st = R.settings; st.tipsSeen = (st.tipsSeen || []).concat(el.dataset.k); saveSettings(); render(); },
   alcNo(el) { el.closest('form')._alcDone = true; el.closest('[data-alc]').hidden = true; },
   rmFav(el) {
     const st = D().settings, list = (st.favorites || []).slice(), [gone] = list.splice(Number(el.dataset.i), 1);
