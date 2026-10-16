@@ -124,7 +124,7 @@ const PRESETS = [
 
 /* ---------- state ---------- */
 const LS_KEY = 'ibd-tracker-v1';
-const DEFAULT_SETTINGS = { condition: null, waterGoal: 8, glassMl: 250, weightUnit: 'kg', favorites: [], sleepPending: null, started: false, lastBackup: null, backupEvery: 7, backupSnooze: null, installTipHidden: false, trackCycle: false, favDismissed: [], customTags: [], showAlcohol: true, showSmoking: true, customSymptoms: [], showMessages: true, keepSafetyNotes: true, ownMessages: [], ownMode: 'mix' };
+const DEFAULT_SETTINGS = { condition: null, waterGoal: 8, glassMl: 250, weightUnit: 'kg', favorites: [], sleepPending: null, started: false, lastBackup: null, backupEvery: 7, backupSnooze: null, installTipHidden: false, trackCycle: false, favDismissed: [], customTags: [], showAlcohol: true, showSmoking: true, customSymptoms: [], showMessages: true, keepSafetyNotes: true, ownMessages: [], ownMode: 'mix', reminderTimes: ['21:00'] };
 let R = { days: {}, meds: {}, settings: clone(DEFAULT_SETTINGS) };
 let SAMPLE = null;
 const D = () => SAMPLE || R;
@@ -924,8 +924,11 @@ function waterCard(date) {
       <button class="icon-btn bordered" data-act="count" data-k="${k}" data-d="-1" aria-label="Remove one ${one}" ${c ? '' : 'disabled'}>${icon('minus')}</button>
       <button class="icon-btn bordered" data-act="count" data-k="${k}" data-d="1" aria-label="Add one ${one}">${icon('plus')}</button></div>`;
   };
+  // A gentle nudge from 2 PM if today's water is under halfway to the goal.
+  const nudge = date === today() && new Date().getHours() >= 14 && n < goal / 2
+    ? `<p class="water-nudge">${n ? `${n} ${plural(n, 'glass', 'glasses')} so far, under halfway to your goal of ${goal}.` : `No water logged yet today. Your goal is ${goal} glasses.`}</p>` : '';
   return `<section class="card"><div class="water-row">${icon('water')}
-    <div class="grow"><strong>Water</strong> <span class="muted">${n} of ${goal} glasses · ${fmtNum((n * ml) / 1000)} L</span><div class="pips" aria-hidden="true">${pips}</div></div>
+    <div class="grow"><strong>Water</strong> <span class="muted">${n} of ${goal} glasses · ${fmtNum((n * ml) / 1000)} L</span><div class="pips" aria-hidden="true">${pips}</div>${nudge}</div>
     <button class="icon-btn bordered" data-act="water" data-d="-1" aria-label="Remove a glass" ${n ? '' : 'disabled'}>${icon('minus')}</button>
     <button class="icon-btn bordered" data-act="water" data-d="1" aria-label="Add a glass">${icon('plus')}</button>
   </div>${st.showAlcohol !== false ? counter('drinks', 'drink', 'Alcohol', 'drink', 'drinks') : ''}${st.showSmoking !== false ? counter('cigs', 'smoke', 'Smoking', 'cigarette', 'cigarettes') : ''}${macHtml}</section>`;
@@ -999,7 +1002,7 @@ function medsDueCard(date) {
       if (dose && dose.status === 'taken') taken++;
       const detail = [doseText(m, date), FOOD[m.food]].filter(Boolean).join(' · ');
       const act = dose
-        ? `<button class="status ${dose.status}" data-act="editDose" data-id="${dose.id}">${dose.status === 'taken' ? icon('ok') + fmtTime(dose.t) : 'Skipped'}</button><button class="icon-btn small" data-act="rmDose" data-id="${dose.id}" aria-label="Remove this log for ${esc(m.name)}" title="Remove this log">${icon('x')}</button>`
+        ? `<button class="status ${dose.status}" data-act="editDose" data-id="${dose.id}">${dose.status === 'taken' ? icon('ok') + fmtTime(dose.t) : 'Skipped'}</button><button class="icon-btn small dose-edit" data-act="editDose" data-id="${dose.id}" aria-label="Edit this log for ${esc(m.name)}" title="Edit">${icon('edit')}</button><button class="icon-btn small" data-act="rmDose" data-id="${dose.id}" aria-label="Remove this log for ${esc(m.name)}" title="Remove this log">${icon('x')}</button>`
         : `<button class="btn small primary" data-act="take" data-med="${m.id}" data-time="${t}">Take</button><button class="icon-btn small" data-act="doseMore" data-med="${m.id}" data-time="${t}" aria-label="More options for ${esc(m.name)}">${icon('dots')}</button>`;
       return `<li class="dose-row"><div class="dose-main"><span class="dose-name">${esc(m.name)}${m.kind !== 'medicine' ? `<span class="kind">${KINDS[m.kind]}</span>` : ''}</span><span class="dose-amt">${esc(detail)}</span>${m.instructions ? `<span class="dose-note">${esc(m.instructions)}</span>` : ''}</div><div class="dose-act">${act}</div></li>`;
     }).join('');
@@ -1010,7 +1013,7 @@ function medsDueCard(date) {
   const extras = (day.doses || []).filter(x => !used.has(x.id)).sort((a, b) => (a.t > b.t ? 1 : -1));
   const extraHtml = extras.length ? `<div class="extra-doses"><span class="lbl">Other doses</span><ul class="dose-list">${extras.map(x => {
     const m = D().meds[x.medId];
-    return `<li class="dose-row"><div class="dose-main"><span class="dose-name">${esc(m ? m.name : x.name)}</span><span class="dose-amt">${esc([x.amount != null ? `${fmtNum(x.amount)} ${x.unit || ''}` : '', x.why].filter(Boolean).join(' · '))}</span></div><div class="dose-act"><button class="status ${x.status}" data-act="editDose" data-id="${x.id}">${x.status === 'taken' ? icon('ok') + fmtTime(x.t) : 'Skipped'}</button><button class="icon-btn small" data-act="rmDose" data-id="${x.id}" aria-label="Remove this log for ${esc(m ? m.name : x.name)}" title="Remove this log">${icon('x')}</button></div></li>`;
+    return `<li class="dose-row"><div class="dose-main"><span class="dose-name">${esc(m ? m.name : x.name)}</span><span class="dose-amt">${esc([x.amount != null ? `${fmtNum(x.amount)} ${x.unit || ''}` : '', x.why].filter(Boolean).join(' · '))}</span></div><div class="dose-act"><button class="status ${x.status}" data-act="editDose" data-id="${x.id}">${x.status === 'taken' ? icon('ok') + fmtTime(x.t) : 'Skipped'}</button><button class="icon-btn small dose-edit" data-act="editDose" data-id="${x.id}" aria-label="Edit this log for ${esc(m ? m.name : x.name)}" title="Edit">${icon('edit')}</button><button class="icon-btn small" data-act="rmDose" data-id="${x.id}" aria-label="Remove this log for ${esc(m ? m.name : x.name)}" title="Remove this log">${icon('x')}</button></div></li>`;
   }).join('')}</ul></div>` : '';
   return `<section class="card"><div class="card-head"><h2>Medicines</h2><span class="muted">${total ? `${taken} of ${total} taken` : 'Nothing scheduled'}</span></div>
     ${html || '<p class="empty">Nothing scheduled for this day.</p>'}${extraHtml}
@@ -1235,6 +1238,48 @@ function installHelp() {
   if (safariMac) return `<p>In Safari on your Mac, choose <strong>File › Add to Dock</strong>.</p>`;
   return `<p>In Chrome, open the ⋮ menu and choose <strong>Add to Home screen</strong> (Android) or <strong>Install IBD Tracker</strong> (computer).</p>`;
 }
+/* ---------- check-in reminders ---------- */
+// The app can't wake itself up while closed, so reminders are daily events in the person's own calendar.
+// The event links back to the app with ?checkin, which opens a new check-in.
+const REMINDER_TITLE = 'IBD Tracker check-in';
+const appLink = () => new URL('./?checkin', location.href).href;
+const reminderText = () => `Time for a quick check-in. Open IBD Tracker: ${appLink()}`;
+function gcalLink(hm) {
+  const d = today().replace(/-/g, ''), stamp = m => fromMin(m).replace(':', '') + '00', start = toMin(hm) ?? 1260;
+  let tz = '';
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { /* older browsers */ }
+  const q = new URLSearchParams({ action: 'TEMPLATE', text: REMINDER_TITLE, dates: `${d}T${stamp(start)}/${d}T${stamp(Math.min(start + 10, 1439))}`, details: reminderText(), recur: 'RRULE:FREQ=DAILY' });
+  if (tz) q.set('ctz', tz);
+  return `https://calendar.google.com/calendar/render?${String(q).replace(/\+/g, '%20')}`;
+}
+// One .ics file with a daily event (and an alert at the start) for each time.
+function remindersIcs(times) {
+  const d = today().replace(/-/g, ''), now = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//IBD Tracker//Check-in reminders//EN', 'CALSCALE:GREGORIAN'];
+  for (const hm of times) {
+    const hhmm = hm.replace(':', '');
+    lines.push('BEGIN:VEVENT', `UID:checkin-${hhmm}-${Date.now()}@ibd-tracker`, `DTSTAMP:${now}`, `DTSTART:${d}T${hhmm}00`, 'DURATION:PT10M', 'RRULE:FREQ=DAILY',
+      `SUMMARY:${REMINDER_TITLE}`, `DESCRIPTION:${reminderText()}`, `URL:${appLink()}`,
+      'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${REMINDER_TITLE}`, 'TRIGGER:PT0S', 'END:VALARM', 'END:VEVENT');
+  }
+  lines.push('END:VCALENDAR');
+  // Calendar files keep lines to 75 characters; longer ones continue on the next line after a space.
+  return lines.map(l => l.length <= 74 ? l : l.match(/.{1,73}/g).join('\r\n ')).join('\r\n') + '\r\n';
+}
+function remindersCard() {
+  const times = D().settings.reminderTimes || [];
+  return `<section class="card"><div class="card-head"><h2>Check-in reminders</h2></div>
+      <p>Add a daily reminder to your own calendar. Your calendar does the reminding, so it works even when the app is closed. The reminder links back here and opens a new check-in.</p>
+      <form id="reminders-form" class="field">
+        ${times.length ? `<ul class="fav-list rem-list">${times.map((t, i) => `<li><input type="time" name="rtime" data-i="${i}" value="${esc(t)}" aria-label="Reminder time ${i + 1}" required>
+          <a class="btn small" data-gcal="${i}" href="${esc(gcalLink(t))}" target="_blank" rel="noopener">${icon('cal')}Add to Google Calendar</a>
+          <button type="button" class="icon-btn small" data-act="rmRTime" data-i="${i}" aria-label="Remove this time">${icon('x')}</button></li>`).join('')}</ul>` : '<p class="empty">No reminder times. Add one below.</p>'}
+        <div class="card-foot">${times.length < 6 ? `<button type="button" class="btn" data-act="addRTime">${icon('plus')}Add a time</button>` : ''}${times.length ? `<button type="button" class="btn" data-act="icsReminders">${icon('save')}Apple or other calendar (.ics)</button>` : ''}</div>
+      </form>
+      <p class="hint" style="margin-top:8px">iPhone, iPad and Mac: use the .ics file, open it and choose Add. Android: Google Calendar is easiest, and it uses your usual notification setting. To stop a reminder, delete the event from your calendar.</p>
+    </section>`;
+}
+
 function viewMore() {
   const st = D().settings, favs = st.favorites || [];
   const n = SAMPLE ? null : daysSinceBackup();
@@ -1269,6 +1314,7 @@ function viewMore() {
           <label class="field"><span class="lbl">Weight unit</span><select id="s-weight" name="weightUnit"><option value="kg" ${st.weightUnit === 'kg' ? 'selected' : ''}>kg</option><option value="lb" ${st.weightUnit === 'lb' ? 'selected' : ''}>lb</option></select></label>
         </div>
       </form></section>
+    ${SAMPLE ? '' : remindersCard()}
     <section class="card"><div class="card-head"><h2>Messages on Today</h2></div>
       <form id="messages-form" class="field">
         <label class="toggle"><input type="checkbox" name="showMessages" id="s-showmsg" ${st.showMessages !== false ? 'checked' : ''}><span>Show encouraging messages on Today</span></label>
@@ -1340,7 +1386,7 @@ function trendRows(n, end = today()) {
       date, day, score: sc ? sc.score : null, trips: bm.length, blood: bm.filter(b => b.blood).length,
       sleep: c && c.total > 0 ? c.total / 60 : null, carbs: mac.carbs ?? null, protein: mac.protein ?? null, fat: mac.fat ?? null, fiber: mac.fiber ?? null,
       tags: new Set(((day && day.meals) || []).flatMap(x => x.tags || [])), flow: (day && day.period && day.period.flow) || 0,
-      night: bm.filter(b => b.night).length, drinks: ((day && day.drinks) || []).length, cigs: ((day && day.cigs) || []).length, bloating: ci.bloating || 0, nausea: ci.nausea || 0, urges: ((day && day.urges) || []).length,
+      night: bm.filter(b => b.night).length, water: (day && day.water) || 0, drinks: ((day && day.drinks) || []).length, cigs: ((day && day.cigs) || []).length, bloating: ci.bloating || 0, nausea: ci.nausea || 0, urges: ((day && day.urges) || []).length,
       sl: c && c.total > 0 ? { total: c.total, latency: c.latency, quality: day.sleep.quality ?? null, morning: morningScore(day.sleep), wakeOther: (day.sleep.pain || 0) + (day.sleep.other || 0), bed: toMin(day.sleep.inBed) >= 900 ? toMin(day.sleep.inBed) - 1440 : toMin(day.sleep.inBed) } : null,
     }, timingFeatures(date, day)));
   }
@@ -1370,7 +1416,7 @@ function viewTrends() {
   }
   const tile = (label, value, sub) => `<div class="tile"><span class="lbl">${label}</span><b>${value}</b><small>${sub || '&nbsp;'}</small></div>`;
   const ranges = [[14, '2 weeks'], [30, '1 month'], [90, '3 months']];
-  const hasAny = rows.some(r => r.score != null || r.trips || r.sleep != null || MACROS.some(([k]) => r[k] != null));
+  const hasAny = rows.some(r => r.score != null || r.trips || r.sleep != null || r.water || r.drinks || r.cigs || MACROS.some(([k]) => r[k] != null));
   return `<div class="pagehead"><h1>Trends</h1><div class="segbtns" role="group" aria-label="Time range">${ranges.map(([d, l]) => `<button type="button" data-act="trendRange" data-n="${d}" aria-pressed="${d === n}">${l}</button>`).join('')}</div></div>
   <div class="trends">
     <div class="tiles">
@@ -1390,6 +1436,7 @@ function viewTrends() {
     </div>
     <section class="card"><div class="card-head"><h2>Carbs, protein, fat and fibre</h2><span class="muted">average meal rating, 1–10</span></div>${macroHeadline(rows)}<div class="chart" data-chart="food" aria-label="Chart of daily carbs, protein, fat and fibre ratings"></div>
       <div class="chart-legend">${MACROS.map(([, l], i) => `<span><i class="line" style="background:var(--s${i + 1})"></i>${l}</span>`).join('')}</div></section>
+    ${habitsCard(rows)}
     <section class="card"><div class="card-head"><h2>Food, drinks and next-day symptoms</h2></div>${triggerTable(rows)}</section>
     <section class="card"><div class="card-head"><h2>Meals and symptoms a few hours later</h2>${symptomPicker()}</div>${mealSymptomBlock()}</section>
     <section class="card"><div class="card-head"><h2>Meal and medicine timing</h2></div>${afterMealStats(rows)}${timingTable(rows)}</section>
@@ -1500,6 +1547,9 @@ function triggerTable(rows) {
   const st = D().settings, tests = foodTests(ate);
   if (st.showAlcohol !== false) tests.push({ label: 'Any alcohol', say: 'after drinking alcohol', noPraise: true, has: r => r.drinks > 0 || r.tags.has('Alcohol'), applies: ate }, { label: '3 or more drinks', say: 'after 3 or more drinks', noPraise: true, has: r => r.drinks >= 3, applies: ate });
   if (st.showSmoking !== false) tests.push({ label: 'Smoked', say: 'after smoking', noPraise: true, has: r => r.cigs > 0, applies: ate });
+  const goal = st.waterGoal || 8, drank = r => r.water > 0;
+  tests.push({ label: `Below your water goal (under ${goal} glasses)`, say: 'after drinking less water than your goal', noPraise: true, has: r => r.water < goal, applies: drank },
+    { label: '2 or fewer glasses of water', say: 'after days with 2 or fewer glasses of water', noPraise: true, has: r => r.water <= 2, applies: drank });
   return patternBlock('tblFood', rows, tests, {
     heading: 'What you had',
     emptyMsg: 'Keep logging meals and symptoms for a couple of weeks. This then compares your next-day score after different foods.',
@@ -1697,8 +1747,8 @@ function dailyTable(rows) {
   const r = rows.slice().reverse().filter(x => x.score != null || x.trips || x.sleep != null || x.drinks || x.cigs || MACROS.some(([k]) => x[k] != null));
   if (!r.length) return '<p class="empty" style="margin-top:8px">Nothing logged in this period.</p>';
   const v = x => (x == null ? '–' : fmtNum(round1(x)));
-  return `<div class="tbl-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>Day</th><th>${scoreDef().short}</th><th>Trips</th><th>With blood</th><th>Sleep</th><th>Carbs</th><th>Protein</th><th>Fat</th><th>Fibre</th><th>Urges</th><th>Bloating</th><th>Nausea</th>${D().settings.showAlcohol !== false ? '<th>Drinks</th>' : ''}${D().settings.showSmoking !== false ? '<th>Cigarettes</th>' : ''}${D().settings.trackCycle ? '<th>Period</th>' : ''}</tr></thead><tbody>
-    ${r.map(x => `<tr><td>${fmtDay(x.date)}</td><td>${v(x.score)}</td><td>${x.trips}</td><td>${x.blood}</td><td>${x.sleep != null ? fmtDur(x.sleep * 60) : '–'}</td><td>${v(x.carbs)}</td><td>${v(x.protein)}</td><td>${v(x.fat)}</td><td>${v(x.fiber)}</td><td>${x.urges || '–'}</td><td>${Math.round(x.bloating) ? SEVERITY[Math.round(x.bloating)] : '–'}</td><td>${Math.round(x.nausea) ? SEVERITY[Math.round(x.nausea)] : '–'}</td>${D().settings.showAlcohol !== false ? `<td>${x.drinks}</td>` : ''}${D().settings.showSmoking !== false ? `<td>${x.cigs}</td>` : ''}${D().settings.trackCycle ? `<td>${x.flow ? FLOW[x.flow] : '–'}</td>` : ''}</tr>`).join('')}
+  return `<div class="tbl-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>Day</th><th>${scoreDef().short}</th><th>Trips</th><th>With blood</th><th>Sleep</th><th>Carbs</th><th>Protein</th><th>Fat</th><th>Fibre</th><th>Water</th><th>Urges</th><th>Bloating</th><th>Nausea</th>${D().settings.showAlcohol !== false ? '<th>Drinks</th>' : ''}${D().settings.showSmoking !== false ? '<th>Cigarettes</th>' : ''}${D().settings.trackCycle ? '<th>Period</th>' : ''}</tr></thead><tbody>
+    ${r.map(x => `<tr><td>${fmtDay(x.date)}</td><td>${v(x.score)}</td><td>${x.trips}</td><td>${x.blood}</td><td>${x.sleep != null ? fmtDur(x.sleep * 60) : '–'}</td><td>${v(x.carbs)}</td><td>${v(x.protein)}</td><td>${v(x.fat)}</td><td>${v(x.fiber)}</td><td>${x.water || '–'}</td><td>${x.urges || '–'}</td><td>${Math.round(x.bloating) ? SEVERITY[Math.round(x.bloating)] : '–'}</td><td>${Math.round(x.nausea) ? SEVERITY[Math.round(x.nausea)] : '–'}</td>${D().settings.showAlcohol !== false ? `<td>${x.drinks}</td>` : ''}${D().settings.showSmoking !== false ? `<td>${x.cigs}</td>` : ''}${D().settings.trackCycle ? `<td>${x.flow ? FLOW[x.flow] : '–'}</td>` : ''}</tr>`).join('')}
   </tbody></table></div>`;
 }
 
@@ -1805,10 +1855,56 @@ function chartFood(el, rows) {
   const tip = r => `${fmtDay(r.date)}\n${!MACROS.some(([k]) => r[k] != null) ? 'No meals rated' : MACROS.map(([k, l]) => `${l} ${r[k] != null ? fmtNum(r[k]) : '–'}`).join(' · ')}`;
   el.innerHTML = svgWrap(f, `${f.grid}${body}${f.hits(tip)}`);
 }
+// ---------- water, alcohol and smoking ----------
+function habitsCard(rows) {
+  const st = D().settings, showA = st.showAlcohol !== false, showS = st.showSmoking !== false, goal = st.waterGoal || 8;
+  return `<section class="card"><div class="card-head"><h2>Water${showA ? ', alcohol' : ''}${showS ? ' and smoking' : ''}</h2></div>${habitsHeadline(rows)}
+    <p class="sublbl chart-title">Water, glasses a day</p><div class="chart chart-sm" data-chart="water" aria-label="Chart of glasses of water per day"></div>
+    <div class="chart-legend"><span><i style="background:var(--c-water)"></i>Glasses</span><span><i class="line" style="background:var(--muted)"></i>Your goal (${goal})</span></div>
+    ${showA ? '<p class="sublbl chart-title">Alcohol, drinks a day</p><div class="chart chart-sm" data-chart="drinks" aria-label="Chart of alcoholic drinks per day"></div>' : ''}
+    ${showS ? '<p class="sublbl chart-title">Smoking, cigarettes a day</p><div class="chart chart-sm" data-chart="cigs" aria-label="Chart of cigarettes per day"></div>' : ''}
+  </section>`;
+}
+function habitsHeadline(rows) {
+  const st = D().settings, goal = st.waterGoal || 8, parts = [];
+  const wd = rows.filter(r => r.water > 0);
+  if (wd.length) {
+    const under = wd.filter(r => r.water < goal).length;
+    parts.push(`About <strong>${fmtNum(round1(mean(wd.map(r => r.water))))} glasses of water</strong> a day${under ? `, under your goal of ${goal} on ${under} of ${wd.length} days` : `, at or above your goal of ${goal} every day you logged`}.`);
+  }
+  if (st.showAlcohol !== false) {
+    const ad = rows.filter(r => r.drinks > 0), total = ad.reduce((a, r) => a + r.drinks, 0);
+    parts.push(ad.length ? `Alcohol on ${ad.length} ${plural(ad.length, 'day', 'days')} (${total} ${plural(total, 'drink', 'drinks')} in total).` : 'No alcohol logged.');
+  }
+  if (st.showSmoking !== false) {
+    const sd = rows.filter(r => r.cigs > 0);
+    parts.push(sd.length ? `Smoked on ${sd.length} ${plural(sd.length, 'day', 'days')}, about ${fmtNum(round1(mean(sd.map(r => r.cigs))))} a day when you did.` : 'No smoking logged.');
+  }
+  if (!wd.length && !rows.some(r => r.drinks || r.cigs)) return '<p class="headline">Use the water, alcohol and smoking counters on Today to see them here.</p>';
+  return `<p class="headline">${parts.join(' ')}</p>`;
+}
+// One series per chart, bars per day; water also gets a dashed goal line.
+function chartCount(el, rows, key, color, unit, empty, goal) {
+  const max = Math.max(0, ...rows.map(r => r[key] || 0));
+  if (!max) return emptyChart(el, empty);
+  const yMax = Math.max(goal ? goal + 2 : 4, Math.ceil(max / 2) * 2);
+  const f = frame(el, rows, yMax, { h: 140, step: niceStep(yMax, 3), r: goal ? 44 : 10 });
+  const w = Math.max(1.5, f.step * 0.62);
+  let bars = '';
+  rows.forEach((r, i) => { const v = r[key] || 0; if (v) bars += `<path d="${topRounded(f.x(i) - w / 2, f.y(v), w, f.y(0) - f.y(v), 4)}" style="fill:${color}"/>`; });
+  const ref = goal ? `<line x1="${f.m.l}" x2="${f.W - f.m.r}" y1="${f.y(goal)}" y2="${f.y(goal)}" style="stroke:var(--muted);stroke-width:1.5;stroke-dasharray:4 4"/><text x="${f.W - f.m.r + 4}" y="${f.y(goal) + 4}">Goal ${goal}</text>` : '';
+  const tip = r => `${fmtDay(r.date)}\n${r[key] ? `${r[key]} ${plural(r[key], unit[0], unit[1])}` : `None logged`}`;
+  el.innerHTML = svgWrap(f, `${f.grid}${bars}${ref}${f.hits(tip)}`);
+}
 function drawCharts() {
   const rows = S.trendData;
   if (!rows) return;
-  const fns = { score: chartScore, trips: chartTrips, sleep: chartSleep, food: chartFood };
+  const fns = {
+    score: chartScore, trips: chartTrips, sleep: chartSleep, food: chartFood,
+    water: (el, r) => chartCount(el, r, 'water', 'var(--c-water)', ['glass', 'glasses'], 'Log water on Today to see it here.', D().settings.waterGoal || 8),
+    drinks: (el, r) => chartCount(el, r, 'drinks', 'var(--c-meal)', ['drink', 'drinks'], 'No alcohol logged in this period.'),
+    cigs: (el, r) => chartCount(el, r, 'cigs', 'var(--muted)', ['cigarette', 'cigarettes'], 'No smoking logged in this period.'),
+  };
   document.querySelectorAll('.chart[data-chart]').forEach(el => { const fn = fns[el.dataset.chart]; if (fn) fn(el, rows); });
 }
 
@@ -1957,6 +2053,405 @@ function sheetBm(date, entry, isUrge = false) {
   });
 }
 
+/* ---------- built-in food list (used only to suggest meal ratings and tags) ---------- */
+// Each line: names (first is shown) | carbs g | protein g | fat g | fibre g | tag codes, for one typical serving.
+// Rough typical values: suggestions are marked "Suggested" and people adjust them for their own portion and recipe.
+const FOOD_TAG_CODES = { D: 'Dairy', G: 'Gluten', RM: 'Red meat', PR: 'Processed', E: 'Eggs', SF: 'Seafood', BL: 'Beans or lentils', NS: 'Nuts or seeds', RV: 'Raw veg', WG: 'Whole grains', FR: 'Fruit', OG: 'Onion or garlic', CH: 'Chocolate', AC: 'Acidic (tomato, citrus)', SP: 'Spicy', FF: 'Fried or fatty', SU: 'Sugary', HF: 'High-fiber', FM: 'High-FODMAP', TA: 'Takeaway or restaurant', AL: 'Alcohol', CA: 'Caffeine', FZ: 'Fizzy drinks', FJ: 'Fruit juice', AS: 'Artificial sweeteners' };
+const FOODS_RAW = `
+rice/white rice/steamed rice/plain rice/chawal|45|4|0.5|0.6|
+brown rice|45|5|1.8|3.5|WG
+jeera rice|46|4|5|0.8|
+fried rice/egg fried rice|60|9|12|2|FF
+lemon rice|46|4|6|1|AC
+curd rice/dahi chawal/thayir sadam|35|7|6|0.5|D
+biryani/chicken biryani|60|25|18|2|SP FF
+veg biryani/vegetable biryani|62|8|14|4|SP
+mutton biryani/lamb biryani|55|28|22|2|SP FF RM
+pulao/pulav/pilaf|50|5|8|2|
+khichdi/khichri/kichdi|45|12|6|5|BL
+dal/daal/dhal/lentils/moong dal/toor dal/masoor dal|25|9|4|5|BL
+dal tadka/dal fry|25|9|8|5|BL OG
+dal makhani|28|12|16|7|BL D FF
+rajma/kidney beans/rajma chawal|35|13|8|11|BL FM
+chole/chana masala/chickpea curry/chana|40|13|9|11|BL SP FM
+chickpeas/garbanzo|35|12|4|10|BL FM
+sambar/sambhar|20|7|4|5|BL SP
+rasam|8|2|2|1|SP AC
+kadhi|15|6|8|1|D
+roti/chapati/chapathi/phulka/fulka|18|3|1|2.5|G WG
+paratha/parantha/plain paratha|30|5|10|3|G FF
+aloo paratha|40|6|13|4|G FF
+paneer paratha|35|10|14|3|G D FF
+thepla|25|4|7|3|G
+naan|45|8|5|2|G
+butter naan/garlic naan|45|8|10|2|G D FF
+kulcha|40|7|6|2|G
+puri/poori|25|4|12|1.5|G FF
+bhatura/bhature/chole bhature|40|6|16|2|G FF
+idli/idlis|32|4|0.6|2|
+dosa/plain dosa|35|5|6|2|
+masala dosa|50|7|12|4|SP
+rava dosa|35|5|9|1|G
+uttapam/uthappam|35|6|6|3|
+appam|25|2|3|1|
+puttu|35|4|1|3|
+pongal/ven pongal|40|8|10|3|D
+vada/medu vada|20|6|10|3|FF BL
+upma/rava upma|40|6|8|3|G
+poha/aval|45|4|7|2|
+sabudana khichdi|60|2|10|1|FF
+dhokla|30|8|5|2|BL
+paneer/cottage cheese|4|14|18|0|D
+paneer tikka|8|20|22|1|D SP
+palak paneer|12|14|20|4|D
+paneer butter masala/shahi paneer/paneer makhani|14|15|28|2|D FF
+kadai paneer/kadhai paneer|12|15|22|3|D SP
+matar paneer|15|13|18|5|D
+aloo gobi|20|4|9|5|OG
+aloo/potato curry/aloo sabzi/aloo sabji|28|3|8|3|
+bhindi/okra/bhindi masala|10|3|8|4|
+baingan/baingan bharta/brinjal/eggplant|12|3|8|6|
+mixed veg/mixed vegetables/sabzi/sabji/vegetable curry|18|4|9|6|OG
+palak/spinach|6|4|5|4|
+saag/sarson ka saag|10|5|10|5|
+curd/dahi/yogurt/yoghurt/plain yogurt|11|9|8|0|D
+greek yogurt|6|17|5|0|D
+raita|8|4|4|1|D
+lassi/sweet lassi/mango lassi|30|8|6|0|D SU
+buttermilk/chaas/chhaas/mattha|5|3|2|0|D
+butter chicken/murgh makhani|12|30|28|2|D FF
+chicken curry/chicken masala|8|28|16|2|SP
+chicken tikka/chicken tikka masala|8|32|14|1|SP
+tandoori chicken|4|35|12|1|SP
+chicken 65/chilli chicken|12|25|18|1|FF SP
+mutton curry/lamb curry/goat curry/rogan josh|8|28|22|2|RM SP
+keema/kheema/mince|8|25|20|2|RM
+fish curry|8|25|12|1|SF SP
+fish fry/fried fish|12|25|16|1|SF FF
+egg curry|8|13|14|1|E SP
+egg bhurji/scrambled eggs/scrambled egg|2|13|15|0|E
+omelette/omelet|2|13|15|0.5|E
+boiled egg/egg/eggs/poached egg|0.6|6|5|0|E
+fried egg|0.6|6|7|0|E FF
+samosa/samosas|30|5|17|3|G FF
+pakora/pakoda/bhaji/bhajji|20|5|14|3|FF
+kachori|30|6|16|3|FF G
+pav bhaji|60|10|20|8|G FF
+vada pav|45|7|15|3|G FF
+pani puri/golgappa/puchka|35|5|8|3|FF SP AC
+bhel puri/bhel|35|5|8|4|SP
+chaat/papdi chaat/aloo tikki|35|5|12|4|FF SP
+momos/momo/dumplings|30|10|6|2|G
+kathi roll/egg roll/frankie/paneer roll|45|18|18|3|G FF TA
+maggi/instant noodles/ramen noodles|52|8|14|2|G PR FF
+hakka noodles/chow mein/noodles|55|10|12|3|G FF
+manchurian/gobi manchurian/veg manchurian|30|6|14|3|FF G
+thali|90|25|30|12|SP D G BL
+gulab jamun|30|3|8|0.5|SU FF D
+jalebi|40|1|10|0|SU FF
+kheer/rice pudding/payasam|35|7|8|0.5|D SU
+halwa/sooji halwa/gajar halwa|40|5|15|2|SU D FF
+ladoo/laddu|25|3|10|1|SU
+rasgulla|35|4|3|0|SU D
+barfi/burfi/mithai|25|4|9|0|SU D
+chai/masala chai/tea with milk/milk tea|10|2|2|0|CA D
+tea/black tea/green tea|0|0|0|0|CA
+herbal tea/chamomile/peppermint tea|0|0|0|0|
+coffee/black coffee/espresso/americano|0|0.3|0|0|CA
+latte/cappuccino/flat white/mocha|12|8|7|0|CA D
+filter coffee|10|3|3|0|CA D
+cold coffee/iced coffee/frappe|30|6|8|0|CA D SU
+bread/white bread/toast/slice of bread|26|5|2|1.5|G
+brown bread/wholemeal bread/whole wheat bread/multigrain bread|24|7|2|4|G WG
+sourdough|30|6|1|2|G
+bagel|50|10|1.5|2|G
+croissant|26|5|12|1.5|G FF
+sandwich|40|15|12|3|G
+chicken sandwich|40|28|12|3|G
+cheese sandwich/grilled cheese|35|15|18|2|G D FF
+avocado toast|30|7|15|8|G
+burger/hamburger/cheeseburger|35|25|20|2|G RM FF PR TA
+chicken burger|40|25|18|2|G FF TA
+veg burger/veggie burger|45|12|15|5|G FF TA
+pizza|70|24|20|4|G D FF PR
+pasta/spaghetti/macaroni/penne|60|12|3|3|G
+pasta in cream sauce/alfredo/carbonara/creamy pasta|60|18|28|3|G D FF
+pasta in tomato sauce/arrabbiata/marinara/pasta pomodoro|65|12|8|5|G AC
+bolognese/spaghetti bolognese|60|25|15|5|G RM AC
+lasagne/lasagna|35|20|18|3|G D RM
+mac and cheese/mac n cheese|50|18|22|2|G D FF PR
+fries/french fries/chips/potato wedges|45|4|17|4|FF
+crisps/potato chips|15|2|10|1|FF PR
+mashed potato/mash|35|4|8|3|D
+baked potato/jacket potato|50|6|0.3|5|
+roast potatoes/roast potato|35|4|8|3|FF
+potato/potatoes|30|3|0.2|3|
+sweet potato/shakarkandi|27|2|0.2|4|
+oats/oatmeal/porridge|30|6|3|4|WG HF
+overnight oats|40|10|6|5|WG D
+cornflakes/cereal/breakfast cereal|25|2|0.3|1|SU PR
+muesli/granola|45|8|10|5|WG NS SU
+pancakes/pancake|45|8|10|1.5|G E SU
+waffles/waffle|40|7|12|1.5|G SU
+french toast|35|10|12|1.5|G E
+salad/green salad/side salad|7|2|0.3|3|RV
+caesar salad|10|10|20|3|RV D
+chicken salad|8|28|10|4|RV
+greek salad|10|6|20|3|RV D
+fruit salad|25|1|0.3|3|FR
+soup/vegetable soup/veg soup|15|3|3|3|
+chicken soup/chicken broth|8|12|4|1|
+tomato soup|20|3|5|2|AC
+lentil soup|30|14|3|8|BL
+chicken breast/grilled chicken|0|31|4|0|
+chicken/chicken thigh/roast chicken|0|25|10|0|
+fried chicken/chicken nuggets/nuggets|15|30|25|1|FF G TA PR
+steak/beef/roast beef|0|30|15|0|RM
+pork/pork chop|0|28|14|0|RM
+bacon|0|8|8|0|RM PR FF
+sausage/sausages|3|10|20|0|RM PR FF
+ham|2|10|4|0|RM PR
+salami/pepperoni/cold cuts|1|8|14|0|RM PR FF
+hot dog|25|10|16|1|RM PR G
+turkey|0|28|5|0|
+lamb/mutton|0|26|18|0|RM
+fish/grilled fish/baked fish/white fish|0|25|5|0|SF
+salmon|0|25|13|0|SF
+tuna|0|25|1|0|SF
+prawns/shrimp/prawn curry|1|20|1|0|SF
+fish and chips|60|30|35|5|SF FF G TA
+sushi/sushi rolls|40|9|2|1|SF
+tofu|3|15|8|1|
+tempeh|9|20|11|5|
+soya chunks/soy chunks/nutrela|15|25|0.5|6|
+beans/baked beans|30|10|1|10|BL FM
+black beans/pinto beans|40|15|1|15|BL FM
+hummus/houmous|8|4|9|3|BL OG
+falafel|30|13|18|6|BL FF
+burrito/burrito bowl|60|25|20|8|G BL SP TA
+tacos/taco|30|12|12|4|SP
+quesadilla|35|20|22|3|G D FF
+nachos|40|8|20|4|FF D
+wrap/tortilla wrap/chicken wrap|35|15|12|3|G
+kebab/doner/doner kebab/shawarma/gyro|40|28|25|3|RM G FF TA
+curry|15|20|16|3|SP
+stir fry/stir fried vegetables|20|20|10|4|
+pho/noodle soup/ramen|60|20|10|3|G
+dim sum|30|10|10|1|G
+spring rolls/spring roll|25|4|12|2|FF G
+cheese/cheddar|0.5|7|9|0|D
+butter|0|0|11|0|D FF
+ghee|0|0|13|0|D FF
+milk/whole milk|12|8|8|0|D FM
+skimmed milk/skim milk/low fat milk|12|8|0.2|0|D
+almond milk|1|1|2.5|0.5|NS
+oat milk|16|3|5|2|
+soy milk/soya milk|4|7|4|1|
+milkshake/shake|60|11|11|1|D SU
+smoothie|40|4|1|4|FR SU
+protein shake/whey|5|25|2|1|D
+ice cream/gelato|30|4|11|1|D SU
+kulfi|25|5|10|0|D SU
+chocolate/dark chocolate/milk chocolate|25|3|14|3|CH SU
+cake/chocolate cake/sponge cake|50|5|18|1.5|G SU D E
+cookie/cookies/biscuit/biscuits|20|2|7|0.5|G SU
+doughnut/donut|30|4|14|1|G SU FF
+muffin/cupcake|45|6|16|1.5|G SU
+brownie|30|3|10|1.5|CH SU G
+pie/apple pie|40|3|15|2|G SU
+custard|25|5|5|0|D SU E
+pudding/dessert|35|4|10|1|SU D
+popcorn|15|2|5|3|HF
+nuts/mixed nuts|6|6|16|3|NS
+almonds/badam|6|6|14|3.5|NS
+peanuts/groundnuts/moongphali|5|7|14|2.5|NS
+cashews/kaju|9|5|13|1|NS
+walnuts/akhrot|4|4|18|2|NS
+pistachios/pista|8|6|13|3|NS
+peanut butter|7|8|16|2|NS
+chia seeds/flax seeds/flaxseed/seeds/pumpkin seeds|5|4|9|8|NS HF
+makhana/fox nuts/lotus seeds|20|3|0.5|4|
+trail mix|20|6|14|3|NS SU
+protein bar|22|20|7|3|PR
+granola bar/cereal bar/energy bar|25|3|7|2|SU
+crackers/cream crackers|20|3|4|1|G
+rice cakes/rice cake|15|2|0.5|0.5|
+namkeen/bhujia/mixture|15|4|12|2|FF SP PR
+apple|25|0.5|0.3|4.4|FR FM
+banana|27|1.3|0.4|3|FR
+orange/mosambi|15|1.2|0.2|3|FR AC
+mango/aam|35|1.4|0.6|3|FR SU
+grapes|27|1|0.3|1.4|FR
+watermelon|11|1|0.2|0.6|FR FM
+papaya|16|0.7|0.4|2.5|FR
+pear|27|0.6|0.2|5.5|FR FM
+strawberries/blueberries/berries/raspberries|14|1|0.5|3|FR
+pineapple|20|0.9|0.2|2|FR AC
+guava/amrood|12|2.5|0.9|5.4|FR HF
+pomegranate/anar|30|3|2|6|FR
+dates/khajur|36|0.5|0|3.5|FR SU
+kiwi|10|0.8|0.4|2|FR
+chikoo/sapota|25|0.5|1|5|FR
+lychee/litchi|17|0.8|0.4|1.3|FR
+avocado|9|2|15|7|FR HF
+raisins/dried fruit/kishmish|33|1|0.2|1.5|FR SU
+broccoli|6|2.5|0.3|2.4|HF
+cauliflower/gobi|5|2|0.3|2|
+carrots/carrot/gajar|10|1|0.2|3|
+cucumber/kheera|4|0.7|0.1|0.5|RV
+tomato/tomatoes|4|1|0.2|1.2|AC
+onion/onions|9|1|0.1|1.7|OG FM
+garlic|1|0.2|0|0.1|OG FM
+peas/green peas/matar|14|5|0.4|5|BL
+corn/sweetcorn/bhutta|27|3|1.5|3|
+mushrooms/mushroom|3|3|0.3|1|FM
+cabbage|5|1|0.1|2|
+beetroot|10|2|0.2|3|
+green beans/french beans|7|2|0.2|3|
+lauki/bottle gourd/tinda/turai|5|1|0.2|2|
+vegetables/veggies/steamed vegetables/boiled vegetables|10|3|0.3|4|
+coleslaw|12|1|10|2|RV
+sprouts/moong sprouts|15|7|0.5|4|BL RV
+water|0|0|0|0|
+juice/fruit juice/orange juice/apple juice|26|1|0.3|0.5|FJ SU
+coconut water/nariyal pani|9|1|0.5|2.6|
+nimbu pani/lemonade/lemon water|20|0|0|0|SU AC
+cola/coke/pepsi/soda/soft drink/fizzy drink|35|0|0|0|FZ SU CA
+diet coke/diet soda/coke zero/pepsi max|0|0|0|0|FZ AS CA
+energy drink/red bull/monster|27|0|0|0|CA SU FZ
+sparkling water/soda water|0|0|0|0|FZ
+beer/lager/ale|13|1.6|0|0|AL G FZ
+wine/red wine/white wine/prosecco/champagne|4|0|0|0|AL
+whisky/whiskey/vodka/rum/gin/brandy/tequila|0|0|0|0|AL
+cocktail/margarita/mojito|20|0|0|0|AL SU
+cider|20|0|0|0|AL FZ SU
+hot chocolate/cocoa|25|8|7|2|D CH SU
+horlicks/bournvita/boost|25|5|3|1|D SU
+`;
+let FOOD_INDEX = null;
+function foodIndex() {
+  if (FOOD_INDEX) return FOOD_INDEX;
+  const idx = [];
+  for (const line of FOODS_RAW.trim().split('\n')) {
+    const [names, c, p, f, fb, codes] = line.split('|');
+    const aliases = names.split('/').map(s => s.trim().toLowerCase()).filter(Boolean);
+    const food = { name: aliases[0], c: +c, p: +p, f: +f, fb: +fb, tags: (codes || '').trim().split(/\s+/).map(t => FOOD_TAG_CODES[t]).filter(Boolean) };
+    for (const a of aliases) { idx.push({ alias: a, food }); if (!a.endsWith('s')) idx.push({ alias: a + 's', food }); }
+  }
+  FOOD_INDEX = idx.sort((x, y) => y.alias.length - x.alias.length);
+  return FOOD_INDEX;
+}
+const NUM_WORDS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, half: 0.5 };
+// Words allowed between a number and the food, as in "2 glasses of wine" or "3 small rotis".
+const QTY_FILLER = new Set('of glass glasses cup cups mug mugs bowl bowls katori katoris plate plates slice slices piece pieces bottle bottles can cans pint pints scoop scoops serving servings handful small large big medium x'.split(' '));
+// Finds known foods in a meal description (any case, longest names first) and combines them.
+// Carbs, protein and fat become a 1–10 level from their share of the meal's calories; fibre from total grams.
+function matchFoods(text) {
+  let s = ' ' + String(text).toLowerCase().replace(/[^a-z0-9.\s]/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
+  const found = [];
+  for (const { alias, food } of foodIndex()) {
+    let i;
+    while ((i = s.indexOf(' ' + alias + ' ')) !== -1) {
+      const before = s.slice(0, i).trim().split(' ');
+      let w = before.pop();
+      while (w && QTY_FILLER.has(w)) w = before.pop();
+      const qty = /^\d+(\.\d+)?$/.test(w || '') ? clamp(parseFloat(w), 0.25, 6) : NUM_WORDS[w] || 1;
+      found.push({ food, qty, alias, pos: i });
+      s = s.slice(0, i + 1) + '#'.repeat(alias.length) + s.slice(i + 1 + alias.length);
+    }
+  }
+  if (!found.length) return null;
+  found.sort((x, y) => x.pos - y.pos);
+  let c = 0, p = 0, f = 0, fb = 0, drinks = 0;
+  const tags = new Set(), names = [];
+  for (const { food, qty, alias } of found) {
+    c += food.c * qty; p += food.p * qty; f += food.f * qty; fb += food.fb * qty;
+    food.tags.forEach(t => tags.add(t));
+    if (food.tags.includes('Alcohol')) drinks += Math.max(1, Math.round(qty));
+    if (!names.includes(alias)) names.push(alias);
+  }
+  if (fb >= 7) tags.add('High-fiber');
+  const out = { names, tags: [...tags], drinks };
+  const kcal = 4 * c + 4 * p + 9 * f;
+  if (kcal >= 20) {
+    const lvl = share => (share < 0.1 ? 1 : share < 0.25 ? 3 : share < 0.45 ? 5 : share < 0.65 ? 7 : 9);
+    Object.assign(out, { carbs: lvl((4 * c) / kcal), protein: lvl((4 * p) / kcal), fat: lvl((9 * f) / kcal), fiber: fb < 1.5 ? 1 : fb < 4 ? 3 : fb < 7 ? 5 : fb < 11 ? 7 : 9 });
+  }
+  return out;
+}
+// The most recent meal with the same name (any case) that has ratings or tags.
+function lastRatedMeal(desc) {
+  const key = mealKey(desc);
+  let best = null, bestKey = '';
+  for (const [date, day] of Object.entries(D().days)) for (const m of day.meals || []) {
+    if (mealKey(m.desc) !== key || (!MACROS.some(([k]) => typeof m[k] === 'number') && !(m.tags || []).length)) continue;
+    const k = `${date} ${m.t || ''}`;
+    if (k > bestKey) { bestKey = k; best = Object.assign({ date }, m); }
+  }
+  return best;
+}
+// Fills untouched fields of a new meal from a remembered meal or the food list.
+// Earlier automatic fills are undone first, so editing the description updates the suggestion.
+function suggestMeal(form, date) {
+  const desc = (form.elements.desc.value || '').trim();
+  form.querySelectorAll('.oslider.auto').forEach(b => { setOptSlider(form, b.dataset.oslider, null); b.classList.remove('auto', 'sugpill'); });
+  form.querySelectorAll('.chips label.auto').forEach(l => { l.querySelector('input').checked = false; l.classList.remove('auto', 'sg'); });
+  mealNote(form, '');
+  alcPrompt(form, date, 0);
+  if (desc.length < 2) return;
+  const past = lastRatedMeal(desc), m = past ? null : matchFoods(desc);
+  if (!past && !m) return;
+  const sug = past || m;
+  for (const [k] of MACROS) {
+    const box = form.querySelector(`[data-oslider="${k}"]`);
+    if (!box || typeof sug[k] !== 'number' || box.querySelector('input[type=hidden]').value !== '') continue;
+    setOptSlider(form, k, sug[k]);
+    box.classList.add('auto');
+    if (!past) box.classList.add('sugpill');
+  }
+  const touched = form._touchedTags || new Set();
+  for (const t of sug.tags || []) {
+    const input = [...form.querySelectorAll('input[name=tags]')].find(i => i.value === t);
+    if (!input || input.checked || touched.has(t)) continue;
+    input.checked = true;
+    input.closest('label').classList.add('auto');
+    if (!past) input.closest('label').classList.add('sg');
+  }
+  const when = past && (past.date === today() ? 'today' : past.date === addDays(today(), -1) ? 'yesterday' : fmtDay(past.date));
+  if (form.querySelector('.oslider.auto, .chips label.auto')) mealNote(form, past ? `Filled in from the last time you logged this (${when}).` : `Filled in from the food list (${m.names.join(', ')}). Change anything that's different.`, past ? 'cal' : 'sparkle');
+  if ((sug.tags || []).includes('Alcohol')) alcPrompt(form, date, past ? (matchFoods(desc) || {}).drinks || 1 : m.drinks || 1);
+}
+function mealNote(form, msg, ic) {
+  const note = form.querySelector('[data-suggest-note]');
+  if (!note) return;
+  note.innerHTML = msg ? `${icon(ic)}<span>${esc(msg)}</span>` : '';
+  note.hidden = !msg;
+}
+// Offers to add drinks to the alcohol counter when a meal has alcohol in it. Asked once per form.
+function alcPrompt(form, date, n) {
+  const box = form.querySelector('[data-alc]');
+  if (!box) return;
+  const show = n > 0 && D().settings.showAlcohol !== false && !form._alcDone;
+  box.hidden = !show;
+  if (!show) return;
+  box.dataset.n = n;
+  box.querySelector('[data-alc-text]').textContent = `Add ${n} ${plural(n, 'drink', 'drinks')} to ${date === today() ? "today's" : "this day's"} alcohol counter?`;
+}
+// Fills the whole meal form from a favourite or one of yesterday's meals.
+function fillMeal(form, m, date) {
+  form.querySelectorAll('.oslider.auto').forEach(b => b.classList.remove('auto', 'sugpill'));
+  form.querySelectorAll('.chips label.auto').forEach(l => l.classList.remove('auto', 'sg'));
+  form.elements.desc.value = m.desc;
+  for (const c of form.querySelectorAll('input[name=tags]')) c.checked = (m.tags || []).includes(c.value);
+  if (m.type) for (const r of form.querySelectorAll('input[name=type]')) r.checked = r.value === m.type;
+  if (m.portion && form.elements.portion) form.elements.portion.value = m.portion;
+  for (const [k] of MACROS) setOptSlider(form, k, m[k]);
+  const fav = form.querySelector('#f-fav');
+  if (fav) fav.closest('label').hidden = (D().settings.favorites || []).some(f => mealKey(f.desc) === mealKey(m.desc));
+  mealNote(form, '');
+  alcPrompt(form, date, (m.tags || []).includes('Alcohol') ? (matchFoods(m.desc) || {}).drinks || 1 : 0);
+}
+
 /* ---------- meal ---------- */
 function mealTypeFor(hm) { const m = toMin(hm) ?? 720; return m < 630 ? 'Breakfast' : m < 900 ? 'Lunch' : m < 1050 ? 'Snack' : 'Dinner'; }
 function sheetMeal(date, entry) {
@@ -1964,16 +2459,30 @@ function sheetMeal(date, entry) {
   const e = entry || { id: uid(), t, type: mealTypeFor(t), desc: '', tags: [], portion: 'Normal', carbs: null, protein: null, fat: null, fiber: null, note: '' };
   const favs = D().settings.favorites || [];
   const recent = [...new Set(Object.values(D().days).flatMap(d => (d.meals || []).map(x => x.desc)).filter(Boolean))].slice(-40);
+  // Yesterday's meals that aren't logged on this day yet, so a repeat takes one tap.
+  const loggedHere = new Set((getDay(date).meals || []).map(x => mealKey(x.desc)));
+  const yday = entry ? [] : ((D().days[addDays(date, -1)] || {}).meals || []).filter(x => x.desc && !loggedHere.has(mealKey(x.desc))).sort((a, b) => (a.t || '').localeCompare(b.t || ''));
   openSheet({
     title: entry ? 'Edit meal' : 'Meal or drink',
-    body: `${!entry && favs.length ? group('Favourites', `<div class="favs">${favs.map((f, i) => `<button type="button" class="chip-btn" data-act="useFav" data-i="${i}">${esc(f.desc)}</button>`).join('')}</div>`) : ''}
+    body: `${yday.length ? group('From yesterday', `<div class="favs">${yday.map(m => `<button type="button" class="chip-btn" data-act="useYday" data-id="${m.id}">${esc(m.type ? `${m.type} · ${m.desc}` : m.desc)}</button>`).join('')}</div>`) : ''}
+      ${!entry && favs.length ? group('Favourites', `<div class="favs">${favs.map((f, i) => `<button type="button" class="chip-btn" data-act="useFav" data-i="${i}">${esc(f.desc)}</button>`).join('')}</div>`) : ''}
+      ${!entry && (yday.length || favs.length) ? '<p class="hint" style="margin-top:-6px">Tap one to fill the form with everything you logged then.</p>' : ''}
       <div class="row2">${field('Time', timeInput('t', e.t))}${field('Portion', `<select name="portion" id="f-portion">${PORTIONS.map(p => `<option ${p === e.portion ? 'selected' : ''}>${p}</option>`).join('')}</select>`)}</div>
       ${group('Type', seg('type', MEAL_TYPES, e.type, { values: MEAL_TYPES }))}
       ${field('What did you have?', textInput('desc', e.desc, 'e.g. Rice, dal and curd', 'required list="meal-list"') + `<datalist id="meal-list">${recent.map(r => `<option value="${esc(r)}"></option>`).join('')}</datalist>`)}
+      ${entry ? '' : `<p class="sug-note" data-suggest-note hidden></p>
+      <div class="alc-prompt" data-alc hidden><span data-alc-text></span><span class="alc-btns"><button type="button" class="btn small" data-act="alcAdd">Add</button><button type="button" class="btn small ghost" data-act="alcNo">No thanks</button></span></div>`}
       <fieldset class="field"><div class="rate-head"><legend class="lbl">This meal was…</legend><button type="button" data-act="clearMacros">Clear</button></div>${MACROS.map(([k, l]) => optSliderRow(k, l, e[k], MACRO_WORDS[k])).join('')}</fieldset>
       ${group('Tags <span class="hint">used to spot triggers</span>', TAG_GROUPS.map(([g, list]) => `<div class="tag-group"><span class="sublbl">${g}</span>${chips('tags', list.map(tagLabel), e.tags || [], list)}</div>`).join('') + customTagBlock(e.tags || []))}
       ${noteField(e.note)}
       ${favs.some(f => f.desc === e.desc) ? '' : '<label class="toggle"><input type="checkbox" name="fav" id="f-fav"><span>Save to favourites</span></label>'}`,
+    // New meals only: suggest ratings and tags as the description is typed. Anything the person changes is left alone.
+    onInput: entry ? null : (form, ev) => {
+      if (!ev) { form._touchedTags = new Set(); form._date = date; return; }
+      const tg = ev.target;
+      if (tg.name === 'tags') { form._touchedTags.add(tg.value); tg.closest('label').classList.remove('auto', 'sg'); }
+      if (tg.name === 'desc' && ev.type === 'input') { clearTimeout(form._sugT); form._sugT = setTimeout(() => suggestMeal(form, date), 300); }
+    },
     onSave: fd => {
       const rating = k => { const v = Number(fd.get(k)); return v >= 1 && v <= 10 ? v : null; };
       const x = { id: e.id, t: fd.get('t'), type: fd.get('type') || 'Snack', desc: (fd.get('desc') || '').trim(), tags: fd.getAll('tags'), portion: fd.get('portion') || 'Normal', carbs: rating('carbs'), protein: rating('protein'), fat: rating('fat'), fiber: rating('fiber'), note: (fd.get('note') || '').trim() };
@@ -1983,6 +2492,11 @@ function sheetMeal(date, entry) {
       if (!entry) toast('Meal logged');
     },
     onDelete: entry ? () => removeEntry(date, 'meals', e.id, 'meal') : null,
+  });
+  // Long chip lists stop at 4 lines and scroll; the bottom edge fades while there's more below.
+  document.querySelectorAll('#sheet .favs').forEach(x => {
+    const upd = () => x.classList.toggle('has-more', x.scrollTop + x.clientHeight < x.scrollHeight - 2);
+    upd(); x.addEventListener('scroll', upd, { passive: true });
   });
 }
 
@@ -2390,10 +2904,11 @@ function markReady() { if (S.ready) return; S.ready = true; render(); }
 /* ---------- export / import ---------- */
 // On phones the share menu lets people save straight to Google Drive, iCloud Drive or Files.
 // On computers the file goes to Downloads.
-async function saveFile(filename, text, mime) {
+// Calendar files skip the share sheet (share = false): opening the download lets the calendar add the events.
+async function saveFile(filename, text, mime, share = true) {
   let touch = false;
   try { touch = window.matchMedia('(pointer: coarse)').matches; } catch (e) { /* ignore */ }
-  if (touch && navigator.canShare) {
+  if (share && touch && navigator.canShare) {
     try {
       const file = new File([text], filename, { type: mime });
       if (navigator.canShare({ files: [file] })) {
@@ -2577,13 +3092,35 @@ const A = {
   },
   useFav(el) {
     const f = (D().settings.favorites || [])[Number(el.dataset.i)], form = el.closest('form');
-    if (!f || !form) return;
-    form.elements.desc.value = f.desc;
-    for (const c of form.querySelectorAll('input[name=tags]')) c.checked = (f.tags || []).includes(c.value);
-    if (f.type) for (const r of form.querySelectorAll('input[name=type]')) r.checked = r.value === f.type;
-    for (const [k] of MACROS) setOptSlider(form, k, f[k]);
-    const fav = form.querySelector('#f-fav'); if (fav) fav.closest('label').hidden = true;
+    if (f && form) fillMeal(form, f, form._date || S.date);
   },
+  useYday(el) {
+    const form = el.closest('form'), date = (form && form._date) || S.date;
+    const m = ((D().days[addDays(date, -1)] || {}).meals || []).find(x => x.id === el.dataset.id);
+    if (m && form) fillMeal(form, m, date);
+  },
+  alcAdd(el) {
+    const box = el.closest('[data-alc]'), form = el.closest('form'), n = Number(box.dataset.n) || 1, date = form._date || S.date;
+    mutDay(date, d => { const list = (d.drinks || []).slice(); for (let i = 0; i < n && list.length < 99; i++) list.push(date === today() ? nowHM() : '12:00'); d.drinks = list; });
+    form._alcDone = true; box.hidden = true;
+    toast(`Added ${n} ${plural(n, 'drink', 'drinks')} to the alcohol counter`);
+  },
+  addRTime() {
+    const st = D().settings, times = (st.reminderTimes || []).slice();
+    if (times.length >= 6) return;
+    times.push(['09:00', '13:00', '18:00', '21:00', '07:30', '15:30'].find(t => !times.includes(t)) || '12:00');
+    st.reminderTimes = times; saveSettings(); render();
+  },
+  rmRTime(el) {
+    const st = D().settings, times = (st.reminderTimes || []).slice();
+    times.splice(Number(el.dataset.i), 1);
+    st.reminderTimes = times; saveSettings(); render();
+  },
+  icsReminders() {
+    const times = (D().settings.reminderTimes || []).filter(t => toMin(t) != null);
+    if (times.length) saveFile('ibd-tracker-check-in-reminders.ics', remindersIcs(times), 'text/calendar', false);
+  },
+  alcNo(el) { el.closest('form')._alcDone = true; el.closest('[data-alc]').hidden = true; },
   rmFav(el) {
     const st = D().settings, list = (st.favorites || []).slice(), [gone] = list.splice(Number(el.dataset.i), 1);
     st.favorites = list;
@@ -2671,7 +3208,7 @@ const A = {
     await Store.clearAll(); SAMPLE = null; S.tab = 'today'; S.date = today(); render(); toast('All data on this device was deleted');
   },
   clearSlider(el) { setOptSlider(el.closest('form'), el.dataset.k, null); },
-  clearMacros(el) { const f = el.closest('form'); for (const [k] of MACROS) setOptSlider(f, k, null); },
+  clearMacros(el) { const f = el.closest('form'); for (const [k] of MACROS) setOptSlider(f, k, null); f.querySelectorAll('.oslider.auto').forEach(b => b.classList.remove('auto', 'sugpill')); },
   mealSym(el) { S.mealSym = el.dataset.k; render(); },
   exitSample() { exitSample(); },
   exportJson() { exportJson(); },
@@ -2690,7 +3227,7 @@ function markSlider(t) {
   const box = t.closest('[data-oslider]');
   if (!box) return;
   box.querySelector('input[type=hidden]').value = t.value;
-  box.classList.remove('unset');
+  box.classList.remove('unset', 'auto', 'sugpill');
   box.querySelector('.oval').textContent = box.dataset.words ? sliderWord(box.dataset.words.split('|'), t.value) : t.value;
 }
 document.addEventListener('click', e => { if (e.target.matches && e.target.matches('[data-oslider-input]')) markSlider(e.target); });
@@ -2702,6 +3239,13 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'f-import' && t.files && t.files[0]) { importFile(t.files[0]); t.value = ''; return; }
+  if (t.form && t.form.id === 'reminders-form' && t.name === 'rtime') {
+    if (toMin(t.value) == null) return;
+    const st = D().settings, times = (st.reminderTimes || []).slice(), i = Number(t.dataset.i);
+    times[i] = t.value; st.reminderTimes = times; saveSettings();
+    const a = t.form.querySelector(`[data-gcal="${i}"]`); if (a) a.href = gcalLink(t.value);
+    return;
+  }
   if (t.form && t.form.id === 'messages-form') {
     const st = D().settings;
     if (t.name === 'showMessages') st.showMessages = t.checked;
@@ -2724,7 +3268,7 @@ document.addEventListener('change', e => {
     if (['condition', 'trackCycle', 'showAlcohol', 'showSmoking'].includes(t.name)) render();
   }
 });
-document.addEventListener('submit', e => { if (e.target.id === 'settings-form' || e.target.id === 'messages-form') e.preventDefault(); });
+document.addEventListener('submit', e => { if (['settings-form', 'messages-form', 'reminders-form'].includes(e.target.id)) e.preventDefault(); });
 document.addEventListener('toggle', e => { const k = e.target.dataset && e.target.dataset.key; if (k) S.open[k] = e.target.open; }, true);
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && sheetCtx) closeSheet();
@@ -2787,5 +3331,14 @@ if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !/^(l
 
 /* ---------- boot ---------- */
 render();
-Store.init();
+// A calendar reminder opens the app with ?checkin: start a new check-in for today.
+Store.init().then(() => {
+  let want = false;
+  try { want = new URLSearchParams(location.search).has('checkin'); } catch (e) { /* ignore */ }
+  if (!want) return;
+  try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) { /* ignore */ }
+  if (!R.settings.started || SAMPLE) return;
+  S.tab = 'today'; S.date = today(); render();
+  sheetCheckin(today());
+});
 })();

@@ -544,3 +544,27 @@ details.more-table summary { cursor: pointer; font-size: 13.5px; font-weight: 60
 .cal-flag { display: inline-flex; vertical-align: -2px; margin-left: 3px; }
 .cal-flag .ic { width: 12px; height: 12px; }
 .legend .cal-flag { margin: 0 2px 0 0; }
+
+/* water, alcohol and smoking charts */
+.chart.chart-sm { min-height: 120px; }
+.sublbl.chart-title { margin: 14px 0 4px; }
+.dose-edit { color: var(--muted); }
+.dose-edit:hover { color: var(--accent); }
+/* meal suggestions, From yesterday, water nudge, reminders */
+.sheet .favs { max-height: 154px; overflow-y: auto; overscroll-behavior: contain; padding: 2px; margin: -2px; }
+.sug-note { display: flex; gap: 8px; align-items: flex-start; margin: -4px 0 12px; padding: 8px 12px; border-radius: 10px; background: var(--ack-v-bg); color: var(--ack-v-fg); font-size: 13.5px; }
+.sug-note .ic { flex: none; width: 16px; height: 16px; margin-top: 2px; }
+.oslider.sugpill .oval::after { content: 'Suggested'; display: block; width: max-content; margin: 2px 0 0 auto; padding: 0 6px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 10.5px; font-weight: 600; line-height: 1.6; }
+.chips label.sg input:checked + span { border-style: dashed; }
+.chips label.sg input:checked + span::after { content: '· suggested'; margin-left: 5px; font-weight: 400; color: var(--muted); font-size: 12.5px; }
+.alc-prompt { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -4px 0 12px; padding: 8px 12px; border-radius: 10px; background: var(--ack-y-bg); color: var(--ack-y-fg); font-size: 13.5px; }
+.alc-prompt[hidden], .sug-note[hidden] { display: none; }
+.alc-prompt [data-alc-text] { flex: 1 1 180px; }
+.water-nudge { margin: 6px 0 0; font-size: 13px; color: var(--ack-b-fg); }
+.rem-list li { justify-content: flex-start; flex-wrap: wrap; gap: 8px; padding: 6px 0; }
+.rem-list input[type="time"] { width: auto; min-width: 7.5em; }
+.rem-list .btn .ic { width: 16px; height: 16px; }
+.rem-list .icon-btn { margin-left: auto; }
+.rem-list a.btn { color: var(--ink); }
+.sheet .favs.has-more { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent); }
+.alc-btns { display: flex; gap: 8px; margin-left: auto; }
