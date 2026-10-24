@@ -1,10 +1,11 @@
 // Offline support. Change VERSION whenever you upload a new version of the app,
 // so everyone's installed copy picks up the new files.
-const VERSION = 'ibd-tracker-2026-10-16-4';
+const VERSION = 'ibd-tracker-2026-10-24-5';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './privacy.html', './manifest.webmanifest',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png',
   './icons/apple-touch-icon.png', './icons/favicon-32.png',
+  './fonts/nunito-latin.woff2', './fonts/nunito-latin-ext.woff2',
 ];
 
 self.addEventListener('install', event => {

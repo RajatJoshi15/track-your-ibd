@@ -3,6 +3,16 @@
 'use strict';
 /* ---------- helpers ---------- */
 const $ = (s, el = document) => el.querySelector(s);
+// Light or dark: 'system' follows the phone. The choice is saved with the settings and copied to this
+// browser's storage, so it applies before the data loads (no flash of the wrong colours).
+const THEME_BG = { light: '#F7F3EE', dark: '#191714' };
+function applyTheme(theme) {
+  const t = theme === 'light' || theme === 'dark' ? theme : null, root = document.documentElement;
+  if (t) root.dataset.theme = t; else delete root.dataset.theme;
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => { m.content = t ? THEME_BG[t] : /dark/.test(m.media) ? THEME_BG.dark : THEME_BG.light; });
+  try { localStorage.setItem('ibd-theme', t || 'system'); } catch (e) { /* private browsing */ }
+}
+try { applyTheme(localStorage.getItem('ibd-theme')); } catch (e) { /* storage blocked */ }
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const clone = o => (o == null ? o : JSON.parse(JSON.stringify(o)));
@@ -34,6 +44,13 @@ const icon = n => `<svg class="ic" aria-hidden="true"><use href="#i-${n}"/></svg
 const BRISTOL = [null, 'Separate hard lumps', 'Lumpy, sausage-shaped', 'Sausage with cracks', 'Smooth and soft', 'Soft blobs, clear edges', 'Mushy, ragged edges', 'Watery, no solid pieces'];
 const BLOOD = ['None', 'Streaks', 'Visible', 'Mostly blood'];
 const URGENCY = ['Could wait', 'Had to hurry', 'Had to go right away', 'Accident'];
+// Extra detail on a bathroom trip, saved as numbers. None of it changes the score.
+// bloodAmt 1–4 (AMOUNT), watery 0–4 (WATERY), mucusLvl 1–3 (MUCUS) with `mucus` kept true/false.
+// Older trips may have mucusAmt 1–4 from the earlier mucus wheel; mucusLevel() reads either.
+const AMOUNT = ['', 'A trace', 'A little', 'Some', 'A lot'];
+const WATERY = ['Solid', 'Mostly solid', 'Half and half', 'Mostly liquid', 'All liquid'];
+const MUCUS = ['None', 'Streaks', 'Visible', 'A lot'];
+const mucusLevel = b => (b.mucusLvl ? b.mucusLvl : b.mucusAmt ? [0, 1, 1, 2, 3][b.mucusAmt] : b.mucus ? 2 : 0);
 const WELLBEING = ['Very well', 'Slightly below par', 'Poor', 'Very poor', 'Terrible'];
 const EXTRA = [
   { id: 'joints', label: 'Joint pain', sccai: true, hbi: true, grp: 'ibd' },
@@ -124,11 +141,11 @@ const PRESETS = [
 
 /* ---------- state ---------- */
 const LS_KEY = 'ibd-tracker-v1';
-const DEFAULT_SETTINGS = { condition: null, waterGoal: 8, glassMl: 250, weightUnit: 'kg', favorites: [], sleepPending: null, started: false, lastBackup: null, backupEvery: 7, backupSnooze: null, installTipHidden: false, trackCycle: false, favDismissed: [], customTags: [], showAlcohol: true, showSmoking: true, customSymptoms: [], showMessages: true, keepSafetyNotes: true, ownMessages: [], ownMode: 'mix', reminderTimes: ['21:00'], foldedTrends: [], tipsSeen: [] };
+const DEFAULT_SETTINGS = { condition: null, waterGoal: 8, glassMl: 250, weightUnit: 'kg', favorites: [], sleepPending: null, started: false, lastBackup: null, backupEvery: 7, backupSnooze: null, installTipHidden: false, trackCycle: false, favDismissed: [], customTags: [], showAlcohol: true, showSmoking: true, customSymptoms: [], showMessages: true, keepSafetyNotes: true, ownMessages: [], ownMode: 'mix', reminderTimes: ['21:00'], foldedTrends: [], tipsSeen: [], celebrate: true, theme: 'system' };
 let R = { days: {}, meds: {}, settings: clone(DEFAULT_SETTINGS) };
 let SAMPLE = null;
 const D = () => SAMPLE || R;
-const S = { acks: {}, amReply: null, tab: 'today', date: today(), followToday: true, histMonth: today().slice(0, 7), trendDays: 30, ready: false, open: {} };
+const S = { acks: {}, cel: {}, amReply: null, tab: 'today', date: today(), followToday: true, histMonth: today().slice(0, 7), trendDays: 30, ready: false, open: {} };
 
 /* ---------- storage: everything stays in this browser (IndexedDB) ---------- */
 function idbOpen() {
@@ -246,13 +263,14 @@ function saveSettings() { persist('meta/settings', D().settings); }
 function saveMed(m) { D().meds[m.id] = m; persist('meds/' + m.id, m); scheduleRender(); }
 function deleteMed(id) { delete D().meds[id]; persist('meds/' + id, null); scheduleRender(); }
 
-function blankDay(date) { return { date, bm: [], urges: [], meals: [], doses: [], exercise: [], naps: [], water: 0, drinks: [], cigs: [], notes: [], flagged: false, sleep: null, checkins: [] }; }
+function blankDay(date) { return { date, bm: [], urges: [], gas: [], meals: [], doses: [], exercise: [], naps: [], water: 0, drinks: [], cigs: [], notes: [], flagged: false, sleep: null, checkins: [] }; }
 // Older versions kept one check-in per day in `checkin`; it becomes the first entry of `checkins`.
 function normDay(d) {
   if (!d) return d;
   if (!Array.isArray(d.checkins)) d.checkins = [];
   if (d.checkin) { if (!d.checkins.length) d.checkins.push(Object.assign({ id: 'ci-' + (d.date || uid()) }, d.checkin)); delete d.checkin; }
   if (!Array.isArray(d.urges)) d.urges = [];
+  if (!Array.isArray(d.gas)) d.gas = [];
   if (!Array.isArray(d.notes)) d.notes = [];
   return d;
 }
@@ -267,12 +285,14 @@ function dayCheckin(day) {
 }
 function getDay(date) { return D().days[date] || blankDay(date); }
 function mutDay(date, fn) {
+  const before = D().days[date] || blankDay(date);
   const d = normDay(Object.assign(blankDay(date), clone(D().days[date] || {})));
   fn(d);
   d.date = date; d.updatedAt = Date.now();
   D().days[date] = d;
   persist('days/' + date, d);
   scheduleRender();
+  checkCelebrations(date, before, d);
 }
 function upsertEntry(date, list, entry) {
   mutDay(date, d => {
@@ -369,7 +389,7 @@ function taperText(m) {
 function firstLogDate() {
   let min = null;
   for (const [date, d] of Object.entries(D().days)) {
-    const has = (d.bm || []).length || (d.urges || []).length || (d.meals || []).length || (d.doses || []).length || d.sleep || (d.checkins || []).length || d.checkin || (d.exercise || []).length;
+    const has = (d.bm || []).length || (d.urges || []).length || (d.gas || []).length || (d.meals || []).length || (d.doses || []).length || d.sleep || (d.checkins || []).length || d.checkin || (d.exercise || []).length;
     if (has && (!min || date < min)) min = date;
   }
   return min;
@@ -556,6 +576,10 @@ function autoFactors(date) {
   if ((pd.doses || []).some(x => x.status === 'taken' && x.t >= '14:00' && meds[x.medId] && meds[x.medId].category === 'Steroid')) out.push('Steroid after 2 PM');
   return out;
 }
+function lastNight(before) {
+  const keys = Object.keys(D().days).filter(k => k < before && D().days[k].sleep).sort(), k = keys[keys.length - 1];
+  return k ? { date: k, sleep: D().days[k].sleep } : null;
+}
 function lastSleep(before) {
   const keys = Object.keys(D().days).filter(k => k < before && D().days[k].sleep).sort();
   return keys.length ? D().days[keys[keys.length - 1]].sleep : null;
@@ -604,6 +628,7 @@ function makeSample() {
     for (let k = 0; k < nDay; k++) d.bm.push(bm(390 + (k + r(0.1, 0.9)) * (930 / nDay), false));
     d.bm = d.bm.filter(b => toMin(b.t) <= cut);
     if (p < 0.35) for (let k = 0; k < ri(1, 2); k++) { const tm = ri(480, 1260); if (tm <= cut) d.urges.push({ id: uid(), t: fromMin(tm), urgency: ri(1, 2), pain: ri(2, 5), night: false, note: '' }); }
+    if (p < 0.6) for (let k = 0; k < ri(0, 3); k++) { const tm = ri(480, 1320); if (tm <= cut) d.gas.push({ id: uid(), t: fromMin(tm), urgency: ri(0, 1), pain: ri(0, 3), night: false, note: '' }); }
 
     const meal = (m, type, [desc, tags, mac]) => ({ id: uid(), t: fromMin(m), type, desc, tags: tags.slice(), portion: 'Normal', carbs: mac ? mac[0] : null, protein: mac ? mac[1] : null, fat: mac ? mac[2] : null, fiber: mac ? mac[3] : null, note: '' });
     d.meals.push(meal(ri(490, 520), 'Breakfast', pick(B)));
@@ -672,6 +697,8 @@ function render() {
   $('#main').innerHTML = !S.ready ? '<p class="loading">Loading…</p>' : onboarding ? viewWelcome() : banners() + views[S.tab]();
   if (S.ready && S.tab === 'trends' && !onboarding) drawCharts();
   initScrollFades($('#main'));
+  initWheels($('#main'));
+  initSlides($('#main'));
   document.querySelectorAll('#nav button[data-tab]').forEach(b => {
     if (b.dataset.tab === S.tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
@@ -716,6 +743,85 @@ function banners() {
   return h;
 }
 
+/* ---------- celebrations ---------- */
+// Small animations for reaching something today. Each plays once a day, the moment it happens, and never on a
+// hard day. They can be turned off in More › Settings, and stay off when the phone asks for reduced motion.
+const CALM_MILESTONES = [3, 7, 14, 30], LOG_MILESTONES = [7, 30];
+const reducedMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+const celebrateOn = () => !SAMPLE && D().settings.celebrate !== false && !reducedMotion();
+function hardDay(date) {
+  const sc = dayScore(getDay(date));
+  if (!sc) return false;
+  const k = todaySituation(date, sc).key;
+  return band(sc.score).i >= 2 || SAFETY.includes(k) || k === 'worse';
+}
+function allDosesTaken(date, day) {
+  const slots = Object.values(D().meds).flatMap(m => slotsFor(m, date));
+  return slots.length > 0 && slots.every(sl => (day.doses || []).some(x => x.medId === sl.medId && x.slot === sl.time && x.status === 'taken'));
+}
+const LOG_LISTS = ['bm', 'urges', 'gas', 'meals', 'doses', 'exercise', 'naps', 'checkins', 'notes', 'drinks', 'cigs'];
+const hasEntries = day => !!day && (LOG_LISTS.some(k => (day[k] || []).length) || !!day.water || !!day.sleep);
+function loggingStreak(date) { let n = 0; for (let d = date; hasEntries(D().days[d]); d = addDays(d, -1)) n++; return n; }
+function checkCelebrations(date, before, after) {
+  if (date !== today() || !celebrateOn() || hardDay(date)) return;
+  const go = (kind, n) => { const key = `${date}:${kind}`; if (S.cel[key]) return; S.cel[key] = true; setTimeout(() => celebrate(kind, n), 180); };
+  const goal = D().settings.waterGoal || 8;
+  if ((before.water || 0) < goal && (after.water || 0) >= goal) go('water', goal);
+  if (!allDosesTaken(date, before) && allDosesTaken(date, after)) go('meds');
+  if ((after.checkins || []).length > (before.checkins || []).length) {
+    const sc = dayScore(after), sit = sc && !sc.partial ? todaySituation(date, sc) : null;
+    if (sit && sit.key === 'streak' && CALM_MILESTONES.includes(sit.n)) go('calm', sit.n);
+  }
+  if (!hasEntries(before) && hasEntries(after)) { const n = loggingStreak(date); if (LOG_MILESTONES.includes(n)) go('log', n); }
+}
+// Plays over the card it belongs to (or near the top of the screen if that card isn't in view).
+function celebrate(kind, n) {
+  const el = document.querySelector({ water: '#card-water', meds: '#card-meds', calm: '.activity', log: '.quick' }[kind]);
+  const r = el && el.getBoundingClientRect(), seen = r && r.bottom > 60 && r.top < window.innerHeight - 120;
+  const box = document.createElement('div');
+  box.className = 'cele';
+  box.style.left = (seen ? r.left + r.width / 2 : window.innerWidth / 2) + 'px';
+  box.style.top = (seen ? clamp(r.top + Math.min(r.height / 2, 80), 110, window.innerHeight - 170) : window.innerHeight * 0.32) + 'px';
+  const text = { water: `Water goal reached: ${n} glasses`, meds: 'All done for today', calm: `${n} calm days in a row`, log: `${n} days of logging in a row` }[kind];
+  box.innerHTML = `<div class="cele-stage"></div><span class="cele-text" role="status">${esc(text)}</span>`;
+  document.body.appendChild(box);
+  CELEBRATIONS[kind](box.querySelector('.cele-stage'), n);
+  box.animate([{ opacity: 0 }, { opacity: 1, offset: 0.08 }, { opacity: 1, offset: 0.85 }, { opacity: 0 }], { duration: 2800, fill: 'forwards' }).onfinish = () => box.remove();
+}
+const addEl = (parent, html) => { parent.insertAdjacentHTML('beforeend', html); return parent.lastElementChild; };
+const CELEBRATIONS = {
+  // Droplets rise.
+  water(st) {
+    for (let i = 0; i < 12; i++) {
+      const sz = 7 + Math.random() * 5, x = 50 + (Math.random() - 0.5) * 60;
+      const p = addEl(st, `<span class="cele-p" style="left:${x}%;bottom:0;width:${sz}px;height:${sz}px;background:${['#7DB9E0', '#B5D4F4', '#378ADD'][i % 3]};border-radius:50% 50% 50% 0"></span>`);
+      p.animate([{ transform: 'translateY(0) rotate(-45deg)', opacity: 0 }, { opacity: 1, offset: 0.2 }, { transform: `translateY(-${70 + Math.random() * 30}px) rotate(-45deg)`, opacity: 0 }], { duration: 1100 + Math.random() * 500, delay: Math.random() * 300, easing: 'ease-out', fill: 'both' });
+    }
+  },
+  // A tick draws itself and soft ripples spread out.
+  meds(st) {
+    for (let i = 0; i < 2; i++) addEl(st, '<span class="cele-ring"></span>').animate([{ transform: 'translate(-50%,-50%) scale(.8)', opacity: 0.9 }, { transform: 'translate(-50%,-50%) scale(2.2)', opacity: 0 }], { duration: 1000, delay: 250 + i * 250, easing: 'ease-out', fill: 'both' });
+    const c = addEl(st, '<svg class="cele-tick" viewBox="0 0 52 52"><circle cx="26" cy="26" r="24"/><path d="M15 27l7 7 15-16" stroke-dasharray="40" stroke-dashoffset="40"/></svg>');
+    c.animate([{ transform: 'translate(-50%,-50%) scale(.3)', opacity: 0 }, { transform: 'translate(-50%,-50%) scale(1.12)', opacity: 1, offset: 0.5 }, { transform: 'translate(-50%,-50%) scale(1)', opacity: 1 }], { duration: 450, easing: 'ease-out', fill: 'both' });
+    c.querySelector('path').animate([{ strokeDashoffset: 40 }, { strokeDashoffset: 0 }], { duration: 400, delay: 300, easing: 'ease-out', fill: 'forwards' });
+  },
+  // A small flower blooms one petal at a time.
+  calm(st) {
+    const g = addEl(st, '<div class="cele-flower"></div>');
+    ['#C0DD97', '#9FE1CB', '#FAC775', '#C0DD97', '#9FE1CB', '#FAC775'].forEach((col, i) => {
+      addEl(g, `<span class="cele-petal" style="background:${col}"></span>`).animate([{ transform: `rotate(${i * 60}deg) scale(0)`, opacity: 0 }, { transform: `rotate(${i * 60}deg) scale(1)`, opacity: 0.95 }], { duration: 500, delay: i * 70, easing: 'cubic-bezier(.3,1.5,.5,1)', fill: 'both' });
+    });
+    addEl(g, '<span class="cele-centre"></span>').animate([{ transform: 'scale(0)' }, { transform: 'scale(1)' }], { duration: 300, delay: 450, fill: 'both' });
+    g.animate([{ transform: 'translate(-50%,-50%) rotate(0)' }, { transform: 'translate(-50%,-50%) rotate(30deg)' }], { duration: 2400, easing: 'ease-in-out', fill: 'both' });
+  },
+  // A badge with the number of days stamps in, and a shine sweeps across it.
+  log(st, n) {
+    const b = addEl(st, `<div class="cele-badge">${n}<span></span></div>`);
+    b.animate([{ transform: 'translate(-50%,-50%) translateY(-60px) scale(1.4) rotate(-15deg)', opacity: 0 }, { transform: 'translate(-50%,-50%) scale(.92) rotate(4deg)', opacity: 1, offset: 0.55 }, { transform: 'translate(-50%,-50%) scale(1) rotate(0)', opacity: 1 }], { duration: 600, easing: 'ease-out', fill: 'both' });
+    b.querySelector('span').animate([{ left: '-40px' }, { left: '90px' }], { duration: 600, delay: 650, easing: 'ease-in-out', fill: 'both' });
+  },
+};
+
 /* ---------- today ---------- */
 function relDay(date) {
   const n = daysBetween(date, today());
@@ -727,7 +833,7 @@ function viewToday() {
   return `
   <div class="daybar">
     <button class="icon-btn" data-act="prevDay" aria-label="Previous day">${icon('left')}</button>
-    <div class="title"><span class="eyebrow">${relDay(date)}</span><h1>${LONG_FMT.format(parseYmd(date))}</h1></div>
+    <div class="title"><span class="eyebrow">${isToday ? greeting() : relDay(date)}</span><h1>${LONG_FMT.format(parseYmd(date))}</h1></div>
     <button class="icon-btn" data-act="nextDay" aria-label="Next day" ${isToday ? 'disabled' : ''}>${icon('right')}</button>
   </div>
   <div class="btns" style="justify-content:space-between;margin-bottom:10px">${syncHtml()}${isToday ? '' : '<button class="btn small" data-act="goToday">Back to today</button>'}</div>
@@ -751,16 +857,29 @@ function tipBox(key, text) {
   if (SAMPLE || !R.settings.started || (R.settings.tipsSeen || []).includes(key)) return '';
   return `<div class="tip" role="note">${icon('sparkle')}<p>${text}</p><button type="button" class="btn small ghost" data-act="tipDone" data-k="${key}">Got it</button></div>`;
 }
+function greeting() { const h = new Date().getHours(); return h >= 5 && h < 12 ? 'Good morning' : h >= 12 && h < 17 ? 'Good afternoon' : 'Good evening'; }
 function welcomeCard() {
   return `<section class="card" style="margin-bottom:16px"><div class="card-head"><h2>Your log is ready</h2></div>
   <p>Start by adding the medicines, vitamins and supplements you take. Then log bathroom trips, meals and sleep as your day goes. Everything you enter stays on this device.</p>
   <div class="card-foot"><button class="btn primary" data-act="addMed">${icon('plus')}Add a medicine</button><button class="btn" data-act="new" data-kind="bm">Log a bathroom trip</button><button class="btn ghost" data-act="enterSample">Explore sample data</button></div></section>`;
 }
-function gauge(score) {
-  const def = scoreDef(), segs = def.segs, total = def.max + 1;
-  const mark = score != null ? `<i class="mark" style="left:calc(${((Math.min(score, def.max) + 0.5) / total) * 100}% - 2px)"></i>` : '';
-  return `<div class="gauge" aria-hidden="true">${segs.map((s, i) => `<span class="g${i}" style="flex:${s[0]}"></span>`).join('')}${mark}</div>
-    <div class="gauge-l" aria-hidden="true">${segs.map(s => { const [name, range] = s[1].split(' '); return `<span style="flex:${s[0]}"><b>${name}</b>${range}</span>`; }).join('')}</div>`;
+// The score as an open gauge: four rounded sections, one per level, sized like the score ranges.
+// The sections fill up to the score, and a round marker sits at the score.
+function gaugeRing(score) {
+  const def = scoreDef(), total = def.max + 1, S = 132, C = S / 2, sw = 11, r = C - sw / 2 - 4;
+  const start = -0.375, span = 0.75, cap = (sw + 4) / (2 * Math.PI * r);
+  const pt = t => [C + r * Math.sin(t * 2 * Math.PI), C - r * Math.cos(t * 2 * Math.PI)];
+  const arc = (a0, a1) => { const [x0, y0] = pt(a0), [x1, y1] = pt(a1); return `M${x0.toFixed(2)} ${y0.toFixed(2)} A${r} ${r} 0 ${a1 - a0 > 0.5 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`; };
+  const f = score == null ? 0 : (Math.min(score, def.max) + 1) / total;
+  let lo = 0, out = '', end = null;
+  def.segs.forEach(([w], i) => {
+    const a = lo / total, b = (lo + w) / total, s0 = start + a * span + cap / 2, s1 = start + b * span - cap / 2;
+    lo += w;
+    out += `<path class="gt v${i}" d="${arc(s0, s1)}"/>`;
+    if (f > a) { const e = Math.max(s0 + 0.001, Math.min(s1, start + f * span - cap / 2)); out += `<path class="gf v${i}" d="${arc(s0, e)}"/>`; end = [e, i]; }
+  });
+  if (end) { const [x, y] = pt(end[0]); out += `<circle class="gm v${end[1]}" cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="8"/>`; }
+  return `<svg class="gring" viewBox="0 0 ${S} ${S}" aria-hidden="true">${out}</svg>`;
 }
 /* ---------- messages under "Estimated activity" (Today only) ---------- */
 // Picked by comparing today's score with the last 7 days. Wording rotates by date, so it stays the same all day.
@@ -883,30 +1002,84 @@ function showReply(btn, text) {
 }
 function activityPanel(date) {
   const day = getDay(date), sc = dayScore(day);
-  if (!sc) return `<section class="activity"><span class="eyebrow">Estimated activity</span><p class="act-empty">Log bathroom trips and an evening check-in to see an estimated ${scoreDef().short} activity score for this day.</p>${gauge(null)}</section>`;
+  if (!sc) return `<section class="activity"><div class="act-main"><div class="act-ring">${gaugeRing(null)}<div class="act-mid"><span class="act-score">–</span><span class="act-of">of ${scoreDef().max}</span></div></div>
+    ${actSide(date, null)}</div><p class="act-empty">Log a bathroom trip or an evening check-in to see an estimated ${scoreDef().short} activity score for this day.</p></section>`;
   const b = band(sc.score), bm = day.bm || [], ci = dayCheckin(day), urges = (day.urges || []).length;
   const night = bm.filter(x => x.night).length;
   const maxBlood = bm.reduce((m, x) => Math.max(m, x.blood || 0), 0);
   const maxUrg = bm.reduce((m, x) => Math.max(m, x.urgency || 0), 0);
-  const facts = [`<span class="fact">${bm.length} ${plural(bm.length, 'trip', 'trips')}${night ? ` · ${night} at night` : ''}</span>`];
-  facts.push(maxBlood ? `<span class="fact blood">Blood: ${BLOOD[maxBlood].toLowerCase()}</span>` : bm.length ? '<span class="fact">No blood</span>' : '');
+  // Trips and blood are in the highlights beside the gauge; these chips add the rest.
+  const facts = [night ? `<span class="fact">${night} at night</span>` : ''];
+  if (maxBlood) facts.push(`<span class="fact blood">Blood: ${BLOOD[maxBlood].toLowerCase()}</span>`);
   if (maxUrg) facts.push(`<span class="fact warn">${URGENCY[maxUrg]}</span>`);
   if (bm.some(x => x.mucus)) facts.push('<span class="fact">Mucus</span>');
   if (urges) facts.push(`<span class="fact">${urges} ${plural(urges, 'urge', 'urges')}, nothing came</span>`);
+  const gas = (day.gas || []).length;
+  if (gas) facts.push(`<span class="fact">Gas ${gas} ${plural(gas, 'time', 'times')}</span>`);
   facts.push(ci ? `<span class="fact">Feeling: ${WELLBEING[ci.wellbeing ?? 0].toLowerCase()}${ci.count > 1 ? ` (average of ${ci.count} check-ins)` : ''}</span>` : '');
   if (ci) for (const id of ci.extra || []) facts.push(`<span class="fact">${esc(extraLabel(id))}</span>`);
   const msg = activityMessage(date, sc);
   return `<section class="activity" aria-label="Estimated ${scoreDef().short} ${sc.score}, ${b.label}">
-    <div class="act-top">
-      <div><span class="eyebrow">Estimated activity</span><div class="act-row"><span class="act-score">${sc.score}</span><span class="band b${b.i}">${b.label}</span><span class="act-scale">${scoreDef().short}, of ${scoreDef().max}</span></div></div>
-      <button type="button" class="why-btn" data-act="whyScore" aria-expanded="${!!S.why}">${S.why ? 'Hide details' : 'Why this score?'}</button>
+    <div class="act-main">
+      <div class="act-ring">${gaugeRing(sc.score)}<div class="act-mid"><span class="act-score">${sc.score}</span><span class="act-of">of ${scoreDef().max}</span><span class="band b${b.i}">${b.label}</span></div></div>
+      ${actSide(date, sc)}
     </div>
     ${sc.partial ? '<p class="act-note">Add an evening check-in to include how you feel.</p>' : ''}
     ${S.why ? whyScore(sc) : ''}
-    ${gauge(sc.score)}
     ${msg.html ? `<div class="am-wrap">${msg.html}${msg.hideable ? '<button type="button" class="am-hide" data-act="hideMsgs">Hide</button>' : ''}</div>` : ''}
     <div class="facts">${facts.join('')}</div>
   </section>`;
+}
+// Beside the gauge: two panels you swipe between. Today's highlights first, then the last 7 days.
+function actSide(date, sc) {
+  const dots = ['Today\'s highlights', 'Last 7 days'].map((l, i) => `<button type="button" class="act-dot" data-act="actSlide" data-i="${i}" aria-label="Show ${l.toLowerCase()}" aria-current="${(S.actSlide || 0) === i}"></button>`).join('');
+  return `<div class="act-side"><span class="eyebrow">Estimated activity · ${scoreDef().short}</span>
+    <div class="act-slides" data-slides><div class="act-slide" role="group" aria-label="Today's highlights">${actHighlights(date)}</div><div class="act-slide" role="group" aria-label="Last 7 days">${actWeek(date, sc)}</div></div>
+    <div class="act-foot"><span class="act-dots">${dots}</span>${sc ? `<button type="button" class="why-btn" data-act="whyScore" aria-expanded="${!!S.why}">${S.why ? 'Hide details' : 'Why this score?'}</button>` : ''}</div></div>`;
+}
+function actHighlights(date) {
+  const day = getDay(date), st = D().settings, bm = day.bm || [], isToday = date === today();
+  const row = (k, ic, text, extra = '') => `<div class="hl-row k-${k}"><span class="hl-ic">${icon(ic)}</span><span class="hl-text">${text}${extra}</span></div>`;
+  const blood = bm.reduce((m, b) => Math.max(m, b.blood || 0), 0), out = [];
+  out.push(row('bm', 'bm', bm.length ? `${bm.length} ${plural(bm.length, 'trip', 'trips')} · ${blood ? `<b class="bl">blood: ${BLOOD[blood].toLowerCase()}</b>` : 'no blood'}` : 'No trips logged'));
+  const goal = st.waterGoal || 8, w = day.water || 0;
+  out.push(row('water', 'water', `${w} of ${goal} ${plural(goal, 'glass', 'glasses')}`, `<span class="hl-bar"><i style="width:${Math.min(100, Math.round((w / goal) * 100))}%"></i></span>`));
+  const slots = Object.values(D().meds).flatMap(m => slotsFor(m, date)).sort((a, b) => (a.time > b.time ? 1 : -1));
+  if (slots.length) {
+    const done = sl => (day.doses || []).some(x => x.medId === sl.medId && x.slot === sl.time);
+    const taken = slots.filter(sl => (day.doses || []).some(x => x.medId === sl.medId && x.slot === sl.time && x.status === 'taken')).length;
+    const next = isToday ? slots.find(sl => !done(sl)) : null, late = next && toMin(next.time) < toMin(nowHM()) - 60;
+    out.push(row('dose', 'dose', `${taken} of ${slots.length} doses${next ? ` · ${late ? `${fmtTime(next.time)} overdue` : `next ${fmtTime(next.time)}`}` : taken === slots.length ? ' · all taken' : ''}`));
+  }
+  const c = sleepCalc(date, day.sleep);
+  out.push(row('sleep', 'sleep', c && c.total > 0 ? `Slept ${fmtDur(c.total)}` : 'Sleep not logged'));
+  return out.join('');
+}
+const NARROW_DAY = new Intl.DateTimeFormat(undefined, { weekday: 'narrow' });
+function actWeek(date, sc) {
+  const days = Array.from({ length: 7 }, (_, i) => addDays(date, i - 6)), scores = days.map(d => { const x = dayScore(D().days[d]); return x ? x.score : null; });
+  const top = Math.max(6, ...scores.filter(v => v != null));
+  const bars = days.map((d, i) => { const v = scores[i]; return v == null ? '<i class="none"></i>' : `<i class="v${band(v).i}${i === 6 ? ' now' : ''}" style="height:${Math.round(6 + (v / top) * 30)}px" title="${esc(`${fmtDay(d)}: ${v}`)}"></i>`; }).join('');
+  const prev = Array.from({ length: 7 }, (_, i) => dayScore(D().days[addDays(date, i - 7)])).filter(Boolean).map(x => x.score), words = [];
+  if (sc && prev.length >= 3) {
+    const avg = round1(mean(prev)), d = sc.score - avg;
+    words.push(`${d <= -1 ? 'Lower than' : d >= 1 ? 'Higher than' : 'About'} your 7-day average of ${fmtNum(avg)}.`);
+  }
+  let calm = 0;
+  for (let i = 0; i < 60; i++) { const x = dayScore(D().days[addDays(date, -i)]); if (x && band(x.score).i === 0) calm++; else break; }
+  if (calm >= 2) words.push(`${calm} calm days in a row.`);
+  return `<div class="wk-bars" aria-hidden="true">${bars}</div><div class="wk-days" aria-hidden="true">${days.map(d => `<span>${NARROW_DAY.format(parseYmd(d))}</span>`).join('')}</div>
+    <p class="wk-text">${words.length ? words.join(' ') : scores.some(v => v != null) ? 'Your scores for the last 7 days.' : 'Your last 7 days show here once you log.'}</p>`;
+}
+// The highlights panel remembers which side was showing, so saving an entry doesn't flip it back.
+function initSlides(root) {
+  root.querySelectorAll('[data-slides]').forEach(el => {
+    const dots = el.parentElement.querySelectorAll('.act-dot');
+    const mark = i => dots.forEach((d, k) => d.setAttribute('aria-current', k === i));
+    const step = () => Math.max(1, el.children[1].offsetLeft - el.children[0].offsetLeft);
+    if (S.actSlide) el.scrollLeft = S.actSlide * step();
+    el.addEventListener('scroll', () => { const i = Math.round(el.scrollLeft / step()); if (i !== S.actSlide) { S.actSlide = i; mark(i); } }, { passive: true });
+  });
 }
 // What each part of the score added, shown under the score when "Why this score?" is tapped.
 function whyScore(sc) {
@@ -924,7 +1097,7 @@ function quickGrid(date) {
   const exMins = (day.exercise || []).reduce((a, x) => a + (x.mins || 0), 0);
   const n = (list, word) => (list.length ? `${list.length} ${isToday ? 'today' : 'logged'}` : word);
   const items = [
-    ['bm', 'Bathroom', n(day.bm, 'Log a trip') + ((day.urges || []).length ? ` · ${(day.urges || []).length} ${plural((day.urges || []).length, 'urge', 'urges')}` : '')],
+    ['bm', 'Bathroom', n(day.bm, 'Log a trip') + ((day.urges || []).length ? ` · ${(day.urges || []).length} ${plural((day.urges || []).length, 'urge', 'urges')}` : '') + ((day.gas || []).length ? ` · ${(day.gas || []).length} gas` : '')],
     ['meal', 'Meal', n(day.meals, 'Log food or drink')],
     ['dose', 'Medicine', slots.length ? `${taken} of ${slots.length} taken` : 'Log a dose'],
     ['sleep', 'Sleep', sc ? `${fmtDur(sc.total)} asleep` : pend && pend.date === date ? 'In bed' : isToday ? 'Log last night' : 'Log that night'],
@@ -948,7 +1121,7 @@ function waterCard(date) {
   // A gentle nudge from 2 PM if today's water is under halfway to the goal.
   const nudge = date === today() && new Date().getHours() >= 14 && n < goal / 2
     ? `<p class="water-nudge">${n ? `${n} ${plural(n, 'glass', 'glasses')} so far, under halfway to your goal of ${goal}.` : `No water logged yet today. Your goal is ${goal} glasses.`}</p>` : '';
-  return `<section class="card"><div class="water-row">${icon('water')}
+  return `<section class="card" id="card-water"><div class="water-row">${icon('water')}
     <div class="grow"><strong>Water</strong> <span class="muted">${n} of ${goal} glasses · ${fmtNum((n * ml) / 1000)} L</span><div class="pips" aria-hidden="true">${pips}</div>${nudge}</div>
     <button class="icon-btn bordered" data-act="water" data-d="-1" aria-label="Remove a glass" ${n ? '' : 'disabled'}>${icon('minus')}</button>
     <button class="icon-btn bordered" data-act="water" data-d="1" aria-label="Add a glass">${icon('plus')}</button>
@@ -957,7 +1130,7 @@ function waterCard(date) {
 function sleepCard(date) {
   const isToday = date === today(), day = getDay(date), sl = day.sleep, c = sleepCalc(date, sl);
   const pend = D().settings.sleepPending, h = new Date().getHours();
-  let body;
+  let body, same = null;
   if (pend && pend.date === date && !sl) {
     body = `<div class="sleep-pend"><strong>In bed since ${fmtTime(pend.inBed)}</strong><div class="btns"><button class="btn primary" data-act="awake">${icon('today')}I'm awake</button><button class="btn ghost small" data-act="cancelBed">Cancel</button></div></div>`;
   } else if (c) {
@@ -973,7 +1146,12 @@ function sleepCard(date) {
       <div><span class="lbl">Woke up</span><b>${c.wakeups}×</b><small>${[c.trips ? `${c.trips} bathroom` : '', sl.pain ? `${sl.pain} pain` : '', sl.other ? `${sl.other} other` : ''].filter(Boolean).join(' · ') || 'Slept through'}</small></div>
     </div><div class="facts">${chips.join('')}</div>`;
   } else {
-    body = `<p class="empty">No sleep logged for the night before ${isToday ? 'today' : fmtDay(date)}.</p>`;
+    // One tap to log the same times as the most recent logged night. Quality and wake-ups are left for the person to add.
+    const prev = same = lastNight(date);
+    body = prev
+      ? `<div class="same-night"><p>${prev.date === addDays(date, -1) ? 'Same as last night?' : `Same as your last logged night (${fmtDay(prev.date)})?`} <strong>${fmtTime(prev.sleep.inBed)} to ${fmtTime(prev.sleep.wake)}</strong></p>
+        <div class="btns"><button class="btn primary small" data-act="sameNight" data-date="${date}">Yes, log it</button><button class="btn small" data-act="editSleep" data-date="${date}">Change times</button></div></div>`
+      : `<p class="empty">No sleep logged for the night before ${isToday ? 'today' : fmtDay(date)}.</p>`;
   }
   let tonight = '';
   if (isToday) {
@@ -985,7 +1163,7 @@ function sleepCard(date) {
     .map(n => `<button class="fact" style="cursor:pointer" data-act="edit" data-kind="nap" data-id="${n.id}">Nap ${fmtTime(n.t)} · ${n.mins} min</button>`).join('');
   return `<section class="card"><div class="card-head"><h2>Sleep</h2><span class="muted">Night before ${isToday ? 'today' : fmtDay(date)}</span></div>
     ${body}
-    <div class="naps">${naps}${pend && pend.date === date && !sl ? '' : `<button class="btn small" data-act="editSleep" data-date="${date}">${c ? 'Edit night' : 'Log the night'}</button>`}<button class="btn small ghost" data-act="new" data-kind="nap">Add a nap</button></div>
+    <div class="naps">${naps}${(pend && pend.date === date && !sl) || same ? '' : `<button class="btn small" data-act="editSleep" data-date="${date}">${c ? 'Edit night' : 'Log the night'}</button>`}<button class="btn small ghost" data-act="new" data-kind="nap">Add a nap</button></div>
     ${tonight}
   </section>`;
 }
@@ -1045,7 +1223,7 @@ function medsDueCard(date) {
     const m = D().meds[x.medId];
     return `<li class="dose-row"><div class="dose-main"><span class="dose-name">${esc(m ? m.name : x.name)}</span><span class="dose-amt">${esc([x.amount != null ? `${fmtNum(x.amount)} ${x.unit || ''}` : '', x.why].filter(Boolean).join(' · '))}</span></div><div class="dose-act"><button class="status ${x.status}" data-act="editDose" data-id="${x.id}">${x.status === 'taken' ? icon('ok') + fmtTime(x.t) : 'Skipped'}</button><button class="icon-btn small dose-edit" data-act="editDose" data-id="${x.id}" aria-label="Edit this log for ${esc(m ? m.name : x.name)}" title="Edit">${icon('edit')}</button><button class="icon-btn small" data-act="rmDose" data-id="${x.id}" aria-label="Remove this log for ${esc(m ? m.name : x.name)}" title="Remove this log">${icon('x')}</button></div></li>`;
   }).join('')}</ul></div>` : '';
-  return `<section class="card"><div class="card-head"><h2>Medicines</h2><span class="muted">${total ? `${taken} of ${total} taken` : 'Nothing scheduled'}</span></div>
+  return `<section class="card" id="card-meds"><div class="card-head"><h2>Medicines</h2><span class="muted">${total ? `${taken} of ${total} taken` : 'Nothing scheduled'}</span></div>
     ${html || '<p class="empty">Nothing scheduled for this day.</p>'}${extraHtml}
     <div class="card-foot"><button class="btn small" data-act="new" data-kind="dose">${icon('plus')}Log an as-needed or extra dose</button></div></section>`;
 }
@@ -1061,10 +1239,12 @@ function timeline(date) {
   if (pend && ((pend.date === addDays(date, 1) && toMin(pend.inBed) >= 900) || (pend.date === date && toMin(pend.inBed) < 900))) push(pend.inBed, 'sleep', 'Went to bed', 'Tap “I\'m awake” when you get up', `data-act="noop"`);
   for (const b of day.bm || []) {
     const bits = [];
-    if (b.blood) bits.push(`<span class="bl">Blood: ${BLOOD[b.blood].toLowerCase()}</span>`);
-    if (b.mucus) bits.push('mucus');
+    if (b.blood) bits.push(`<span class="bl">Blood: ${BLOOD[b.blood].toLowerCase()}${b.bloodAmt ? ` (${AMOUNT[b.bloodAmt].toLowerCase()})` : ''}</span>`);
+    if (b.mucus) bits.push(`mucus: ${MUCUS[mucusLevel(b)].toLowerCase()}`);
+    if (b.watery != null) bits.push(WATERY[b.watery].toLowerCase());
     if (b.urgency) bits.push(esc(URGENCY[b.urgency].toLowerCase()));
     if (b.pain) bits.push(`pain ${b.pain}/10`);
+    if (b.gas) bits.push('passed gas too');
     if (b.night) bits.push('at night');
     if (b.note) bits.push(esc(b.note));
     push(b.t, 'bm', `Bathroom${b.bristol ? ` · type ${b.bristol}` : ''}`, bits.join(' · '), `data-act="edit" data-kind="bm" data-id="${b.id}"`, rmBtn('bm', b.id, 'bathroom trip'));
@@ -1085,6 +1265,9 @@ function timeline(date) {
   for (const u of day.urges || []) {
     push(u.t, 'bm', 'Urge · nothing came', esc([u.urgency ? URGENCY[u.urgency].toLowerCase() : '', u.pain ? `pain ${u.pain}/10` : '', u.night ? 'at night' : '', u.note].filter(Boolean).join(' · ')), `data-act="edit" data-kind="urge" data-id="${u.id}"`, rmBtn('urges', u.id, 'urge'));
   }
+  for (const g of day.gas || []) {
+    push(g.t, 'bm', 'Gas', esc([g.urgency ? URGENCY[g.urgency].toLowerCase() : '', g.pain ? `pain ${g.pain}/10` : '', g.night ? 'at night' : '', g.note].filter(Boolean).join(' · ')), `data-act="edit" data-kind="gas" data-id="${g.id}"`, rmBtn('gas', g.id, 'gas entry'));
+  }
   for (const n of day.notes || []) push(n.t, 'note', 'Note', esc(n.text), 'data-act="noop"', rmBtn('notes', n.id, 'note'));
   if (day.flagged) items.push({ m: -2, t: '', kind: 'flag', title: 'Flagged for your doctor', sub: '', attrs: 'data-act="noop"', rm: `data-act="unflag" data-date="${date}" aria-label="Remove the flag" title="Remove the flag"` });
   const pd = day.period;
@@ -1102,7 +1285,8 @@ function timeline(date) {
   }
   if (!items.length) return '<p class="empty">Nothing logged for this day yet. Use the buttons to add entries as you go.</p>';
   items.sort((a, b) => a.m - b.m);
-  return `<ul class="tl">${items.map(i => `<li><button class="tl-item k-${i.kind}" ${i.attrs}><time>${i.t ? fmtTime(i.t) : 'All day'}</time><span class="tl-dot"></span><span class="tl-main"><strong>${i.title}</strong>${i.sub ? `<span class="tl-sub">${i.sub}</span>` : ''}</span></button>${i.rm ? `<button class="icon-btn small tl-rm" ${i.rm}>${icon('x')}</button>` : ''}</li>`).join('')}</ul>`;
+  const TL_ICON = { drinks: 'drink', cigs: 'smoke' };
+  return `<ul class="tl">${items.map(i => `<li><button class="tl-item k-${i.kind}" ${i.attrs}><time>${i.t ? fmtTime(i.t) : 'All day'}</time><span class="tl-ic">${icon(TL_ICON[i.kind] || i.kind)}</span><span class="tl-main"><strong>${i.title}</strong>${i.sub ? `<span class="tl-sub">${i.sub}</span>` : ''}</span></button>${i.rm ? `<button class="icon-btn small tl-rm" ${i.rm}>${icon('x')}</button>` : ''}</li>`).join('')}</ul>`;
 }
 
 /* ---------- history ---------- */
@@ -1132,9 +1316,24 @@ function viewHistory() {
     </section>
     <div class="col">
       <section class="card"><div class="card-head"><h2>${MONTH_FMT.format(first)} at a glance</h2></div>${monthStats(ym)}</section>
+      ${flaggedCard()}
       <section class="card">${aboutScore()}</section>
     </div>
   </div>`;
+}
+// Days flagged for the doctor (from the flag under the score on Today), newest first, with that day's notes.
+function flaggedCard() {
+  const days = Object.keys(D().days).filter(k => D().days[k].flagged).sort().reverse(), shown = S.allFlags ? days : days.slice(0, 8);
+  const row = date => {
+    const day = D().days[date], sc = dayScore(day), b = sc && band(sc.score), bm = day.bm || [], ci = dayCheckin(day);
+    const bits = [bm.length ? `${bm.length} ${plural(bm.length, 'trip', 'trips')}` : '', bm.some(x => x.blood) ? 'blood' : '', ci ? WELLBEING[ci.wellbeing ?? 0].toLowerCase() : ''].filter(Boolean).join(' · ');
+    const notes = (day.notes || []).map(n => n.text).filter(Boolean);
+    return `<li><button type="button" class="flag-row" data-act="openDay" data-date="${date}"><span class="fr-top"><b>${fmtDay(date)}</b>${sc ? `<span class="band b${b.i}">${sc.score} · ${b.label}</span>` : ''}</span>${bits ? `<span class="fr-sub">${esc(bits)}</span>` : ''}${notes.length ? `<span class="fr-note">“${esc(notes.join(' · '))}”</span>` : ''}</button></li>`;
+  };
+  return `<section class="card"><div class="card-head"><h2>Flagged for your doctor</h2>${days.length ? `<span class="muted">${days.length} ${plural(days.length, 'day', 'days')}</span>` : ''}</div>
+    ${days.length ? `<ul class="flag-list">${shown.map(row).join('')}</ul>${days.length > shown.length ? `<button type="button" class="link-btn" data-act="allFlags">Show all ${days.length}</button>` : ''}`
+      : '<p class="empty">No flagged days yet. On a hard day, tap the flag under your score on Today to mark it for your doctor.</p>'}
+    <div class="card-foot"><button type="button" class="btn small" data-act="doctorSummary">${icon('note')}Summary for your doctor</button></div></section>`;
 }
 function monthStats(ym) {
   const t = today(), [y, mo] = ym.split('-').map(Number), count = new Date(y, mo, 0).getDate();
@@ -1273,6 +1472,102 @@ function installHelp() {
   if (safariMac) return `<p>In Safari on your Mac, choose <strong>File › Add to Dock</strong>.</p>`;
   return `<p>In Chrome, open the ⋮ menu and choose <strong>Add to Home screen</strong> (Android) or <strong>Install IBD Tracker</strong> (computer).</p>`;
 }
+/* ---------- summary for the doctor ---------- */
+// A plain summary of the last 30 or 90 days, made on this device. It can be printed, saved as a PDF or saved as text.
+const YEAR_FMT = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+const fmtYear = d => YEAR_FMT.format(parseYmd(d));
+function doctorSummary(n) {
+  const end = today(), start = addDays(end, -(n - 1)), rows = trendRows(n), def = scoreDef(), st = D().settings, sec = [];
+  const add = (title, lines) => { const l = lines.filter(Boolean); if (l.length) sec.push({ title, lines: l }); };
+  const cond = (CONDITIONS.find(c => c[0] === st.condition) || [null, 'Not set'])[1];
+  const scored = rows.filter(r => r.score != null), sc = scored.map(r => r.score), bands = [0, 0, 0, 0];
+  scored.forEach(r => bands[band(r.score).i]++);
+  const worst = scored.slice().sort((a, b) => b.score - a.score)[0], weeks = [];
+  for (let i = 0; i < rows.length; i += 7) { const w = rows.slice(i, i + 7), ws = w.filter(r => r.score != null).map(r => r.score); if (ws.length) weeks.push(`${fmtDay(w[0].date)}: ${fmtNum(round1(mean(ws)))}`); }
+  add(`Estimated activity score (${def.short}, 0 to ${def.max})`, [
+    sc.length ? `Average ${fmtNum(round1(mean(sc)))} over ${sc.length} scored ${plural(sc.length, 'day', 'days')}.` : 'No days scored.',
+    sc.length ? `Days by level: ${['Low', 'Mild', 'Moderate', 'High'].map((l, i) => `${l} ${bands[i]}`).join(', ')}.` : '',
+    worst ? `Highest: ${worst.score} on ${fmtDay(worst.date)}.` : '',
+    weeks.length > 1 ? `Weekly averages (week starting): ${weeks.join('; ')}.` : '',
+  ]);
+  const bm = rows.flatMap(r => (r.day && r.day.bm) || []), bmDays = rows.filter(r => r.trips), nights = rows.filter(r => r.night).length;
+  const bloodDays = rows.filter(r => r.blood).length, worstBlood = bm.reduce((m, b) => Math.max(m, b.blood || 0), 0), maxAmt = bm.reduce((m, b) => Math.max(m, b.bloodAmt || 0), 0);
+  const urgent = bm.filter(b => (b.urgency || 0) >= 2).length, accidents = bm.filter(b => b.urgency === 3).length, loose = bm.filter(b => (b.bristol || 0) >= 6).length;
+  const urges = rows.reduce((a, r) => a + r.urges, 0), mucus = bm.filter(b => b.mucus).length;
+  add('Bathroom', [
+    bmDays.length ? `Average ${fmtNum(round1(mean(bmDays.map(r => r.trips))))} trips a day, on ${bmDays.length} ${plural(bmDays.length, 'day', 'days')} logged.` : 'No bathroom trips logged.',
+    nights ? `Woke for the bathroom on ${nights} ${plural(nights, 'night', 'nights')}.` : '',
+    bmDays.length ? (bloodDays ? `Blood on ${bloodDays} ${plural(bloodDays, 'day', 'days')} (worst: ${BLOOD[worstBlood].toLowerCase()}${maxAmt ? `, ${AMOUNT[maxAmt].toLowerCase()}` : ''}).` : 'No blood logged.') : '',
+    mucus ? `Mucus on ${mucus} ${plural(mucus, 'trip', 'trips')} (most: ${MUCUS[bm.reduce((m, b) => Math.max(m, mucusLevel(b)), 0)].toLowerCase()}).` : '',
+    bm.length ? `Loose or watery stools (Bristol 6 to 7): ${loose} of ${bm.length} trips.` : '',
+    urgent ? `Had to go right away: ${urgent} ${plural(urgent, 'time', 'times')}${accidents ? `, including ${accidents} ${plural(accidents, 'accident', 'accidents')}` : ''}.` : '',
+    urges ? `Felt the need but nothing came: ${urges} ${plural(urges, 'time', 'times')}.` : '',
+    (() => { const g = rows.reduce((a, r) => a + r.gas, 0), gt = bm.filter(b => b.gas).length; return g || gt ? `Gas: ${[g ? `${g} ${plural(g, 'time', 'times')} on its own` : '', gt ? `with ${gt} ${plural(gt, 'trip', 'trips')}` : ''].filter(Boolean).join(', and ')}.` : ''; })(),
+  ]);
+  const wd = rows.filter(r => r.water > 0), goalW = st.waterGoal || 8, drinkDays = rows.filter(r => r.drinks).length, cigDays = rows.filter(r => r.cigs).length;
+  add('Water, alcohol and smoking', [
+    wd.length ? `Water: about ${fmtNum(round1(mean(wd.map(r => r.water))))} glasses a day on ${wd.length} ${plural(wd.length, 'day', 'days')} logged. Goal of ${goalW} reached on ${wd.filter(r => r.water >= goalW).length} of them.` : '',
+    st.showAlcohol !== false ? (drinkDays ? `Alcohol on ${drinkDays} ${plural(drinkDays, 'day', 'days')} (${rows.reduce((a, r) => a + r.drinks, 0)} drinks in total).` : 'No alcohol logged.') : '',
+    st.showSmoking !== false && cigDays ? `Smoked on ${cigDays} ${plural(cigDays, 'day', 'days')} (${rows.reduce((a, r) => a + r.cigs, 0)} cigarettes in total).` : '',
+  ]);
+  const cis = rows.map(r => ({ r, c: dayCheckin(r.day) })).filter(x => x.c), avgOf = k => round1(mean(cis.map(x => x.c[k]).filter(v => typeof v === 'number')));
+  const extra = {}, sym = k => cis.filter(x => (x.c[k] || 0) > 0).length;
+  cis.forEach(x => (x.c.extra || []).forEach(id => { extra[id] = (extra[id] || 0) + 1; }));
+  const weights = cis.filter(x => x.c.weight != null), wu = st.weightUnit || 'kg';
+  add('Check-ins', [
+    cis.length ? `Check-ins on ${cis.length} ${plural(cis.length, 'day', 'days')}.` : 'No check-ins logged.',
+    cis.length ? `Average belly pain ${fmtNum(avgOf('pain'))} out of 10. Average tiredness ${fmtNum(avgOf('fatigue'))} out of 10.` : '',
+    cis.length && (sym('bloating') || sym('nausea')) ? `Bloating on ${sym('bloating')} ${plural(sym('bloating'), 'day', 'days')}, nausea on ${sym('nausea')} ${plural(sym('nausea'), 'day', 'days')}.` : '',
+    Object.keys(extra).length ? `Other symptoms: ${Object.entries(extra).sort((a, b) => b[1] - a[1]).map(([id, k]) => `${extraLabel(id)} (${k} ${plural(k, 'day', 'days')})`).join(', ')}.` : '',
+    weights.length > 1 ? `Weight: ${fmtNum(weights[0].c.weight)} ${wu} on ${fmtDay(weights[0].r.date)}, ${fmtNum(weights[weights.length - 1].c.weight)} ${wu} on ${fmtDay(weights[weights.length - 1].r.date)}.` : weights.length ? `Weight: ${fmtNum(weights[0].c.weight)} ${wu} on ${fmtDay(weights[0].r.date)}.` : '',
+  ]);
+  const first = firstLogDate() || end, from = [start, first].sort().pop(), to = addDays(end, -1);
+  const meds = Object.values(D().meds).filter(m => (!m.startDate || m.startDate <= end) && (!m.endDate || m.endDate >= start)).sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.name.localeCompare(b.name));
+  add('Medicines, vitamins and supplements', meds.map(m => {
+    const a = from <= to ? adherence(m, from, to) : null, ch = (m.changes || []).filter(c => c.date >= start);
+    return [`${m.name}: ${[doseText(m, end), scheduleText(m)].filter(Boolean).join(', ')}`, a ? `Taken ${a.pct}% (${a.taken} of ${a.due} doses)` : '', m.endDate && m.endDate <= end ? `Stopped ${fmtDay(m.endDate)}` : '', ...ch.map(c => `Changed ${fmtDay(c.date)}: ${c.text}`)].filter(Boolean).join('. ') + '.';
+  }));
+  const sleeps = rows.filter(r => r.sl), woke = sleeps.filter(r => r.sl.wakeOther > 0).length;
+  add('Sleep', [
+    sleeps.length ? `Average ${fmtDur(mean(sleeps.map(r => r.sl.total)))} asleep over ${sleeps.length} ${plural(sleeps.length, 'night', 'nights')}.` : '',
+    woke ? `Woke from pain or other reasons on ${woke} ${plural(woke, 'night', 'nights')}.` : '',
+  ]);
+  const flagged = rows.filter(r => r.day && r.day.flagged);
+  add('Flagged days', flagged.map(r => { const notes = (r.day.notes || []).map(x => x.text).filter(Boolean); return `${fmtDay(r.date)}${r.score != null ? `, score ${r.score}` : ''}${notes.length ? `: “${notes.join(' · ')}”` : ''}`; }));
+  add('Patterns in the log (not proof of cause)', topPatterns(rows).map(f => `${f.o.label}: next-day ${def.short} ${fmtNum(round1(f.o.a))} vs ${fmtNum(round1(f.o.c))} on other days (${f.o.n} ${plural(f.o.n, 'day', 'days')}). ${f.conf}.`));
+  return { title: 'IBD Tracker summary', range: `${fmtYear(start)} to ${fmtYear(end)} (${n} days)`, cond, sections: sec };
+}
+function summaryHtml(d) {
+  return `<div class="doc"><h2>${esc(d.title)}</h2><p class="doc-meta">${esc(d.range)} · Condition: ${esc(d.cond)}</p>
+    ${d.sections.map(x => `<h3>${esc(x.title)}</h3><ul>${x.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>`).join('')}
+    <p class="doc-foot">Made with IBD Tracker, from entries the patient keeps on their own device. Activity scores are estimates of published symptom indexes, not a diagnosis.</p></div>`;
+}
+function summaryText(d) {
+  return [d.title, `${d.range}. Condition: ${d.cond}.`, '', ...d.sections.flatMap(x => [x.title.toUpperCase(), ...x.lines.map(l => `- ${l}`), '']),
+    'Made with IBD Tracker, from entries the patient keeps on their own device. Activity scores are estimates of published symptom indexes, not a diagnosis.'].join('\n');
+}
+function sheetDoctor(n = S.docDays || 30) {
+  S.docDays = n;
+  const d = doctorSummary(n);
+  S.doc = d;
+  openSheet({
+    title: 'Summary for your doctor',
+    body: `<div class="segbtns" role="group" aria-label="How far back">${[[30, 'Last 30 days'], [90, 'Last 90 days']].map(([k, l]) => `<button type="button" data-act="docRange" data-n="${k}" aria-pressed="${k === n}">${l}</button>`).join('')}</div>
+      <p class="hint">Made on this device. Print it, save it as a PDF, or save it as a text file to share however you like.</p>${summaryHtml(d)}`,
+    extraFoot: `<button type="button" class="btn" data-act="docPrint">${icon('save')}Print or PDF</button><button type="button" class="btn ghost" data-act="docText">Save as text</button>`,
+  });
+}
+function printSummary() {
+  if (!S.doc) return;
+  let area = document.getElementById('print-area');
+  if (!area) { area = document.createElement('div'); area.id = 'print-area'; document.body.appendChild(area); }
+  area.innerHTML = summaryHtml(S.doc);
+  document.body.classList.add('printing');
+  const done = () => { document.body.classList.remove('printing'); window.removeEventListener('afterprint', done); };
+  window.addEventListener('afterprint', done);
+  window.print();
+}
+
 /* ---------- check-in reminders ---------- */
 // The app can't wake itself up while closed, so reminders are daily events in the person's own calendar.
 // The event links back to the app with ?checkin, which opens a new check-in.
@@ -1306,7 +1601,7 @@ function remindersCard() {
   return `<section class="card"><div class="card-head"><h2>Check-in reminders</h2></div>
       <p>Add a daily reminder to your own calendar. Your calendar does the reminding, so it works even when the app is closed. The reminder links back here and opens a new check-in.</p>
       <form id="reminders-form" class="field">
-        ${times.length ? `<ul class="fav-list rem-list">${times.map((t, i) => `<li><input type="time" name="rtime" data-i="${i}" value="${esc(t)}" aria-label="Reminder time ${i + 1}" required>
+        ${times.length ? `<ul class="fav-list rem-list">${times.map((t, i) => `<li>${timeCols('rtime', `Reminder time ${i + 1}`, t, `data-i="${i}"`)}
           <a class="btn small" data-gcal="${i}" href="${esc(gcalLink(t))}" target="_blank" rel="noopener">${icon('cal')}Add to Google Calendar</a>
           <button type="button" class="icon-btn small" data-act="rmRTime" data-i="${i}" aria-label="Remove this time">${icon('x')}</button></li>`).join('')}</ul>` : '<p class="empty">No reminder times. Add one below.</p>'}
         <div class="card-foot">${times.length < 6 ? `<button type="button" class="btn" data-act="addRTime">${icon('plus')}Add a time</button>` : ''}${times.length ? `<button type="button" class="btn" data-act="icsReminders">${icon('save')}Apple or other calendar (.ics)</button>` : ''}</div>
@@ -1334,6 +1629,7 @@ function viewMore() {
         <button class="btn primary" data-act="exportJson">${icon('save')}Save backup</button>
         ${SAMPLE ? '' : `<label class="btn file-btn">Restore from backup<input type="file" id="f-import" accept="application/json,.json"></label>`}
         <button class="btn" data-act="exportCsv">Spreadsheet for your doctor (.csv)</button>
+        <button class="btn" data-act="doctorSummary">${icon('note')}Summary for your doctor</button>
       </div>
       ${SAMPLE ? '' : `<label class="field" style="margin-top:14px;max-width:320px"><span class="lbl">Remind me to back up every</span><select id="s-backupEvery" name="backupEvery" form="settings-form">${[3, 7, 14, 30].map(d => `<option value="${d}" ${st.backupEvery === d ? 'selected' : ''}>${d} days</option>`).join('')}</select></label>`}
     </section>
@@ -1345,6 +1641,8 @@ function viewMore() {
         <label class="toggle"><input type="checkbox" name="trackCycle" id="s-cycle" ${st.trackCycle ? 'checked' : ''}><span>Track my periods</span></label>
         <label class="toggle"><input type="checkbox" name="showAlcohol" id="s-alcohol" ${st.showAlcohol !== false ? 'checked' : ''}><span>Show the alcohol counter on Today</span></label>
         <label class="toggle"><input type="checkbox" name="showSmoking" id="s-smoking" ${st.showSmoking !== false ? 'checked' : ''}><span>Show the smoking counter on Today</span></label>
+        <label class="toggle"><input type="checkbox" name="celebrate" id="s-celebrate" ${st.celebrate !== false ? 'checked' : ''}><span>Celebration animations <span class="hint">small animations when you reach a goal; off automatically if your phone is set to reduce motion</span></span></label>
+        ${group('Appearance', seg('theme', ['Match my phone', 'Light', 'Dark'], R.settings.theme || 'system', { values: ['system', 'light', 'dark'] }))}
         <div class="row3">
           <label class="field"><span class="lbl">Water goal (glasses)</span><input type="number" id="s-goal" name="waterGoal" min="1" max="30" value="${st.waterGoal}"></label>
           <label class="field"><span class="lbl">Glass size (mL)</span><input type="number" id="s-glass" name="glassMl" min="50" max="1000" step="10" value="${st.glassMl}"></label>
@@ -1426,7 +1724,7 @@ function trendRows(n, end = today()) {
       date, day, score: sc ? sc.score : null, trips: bm.length, blood: bm.filter(b => b.blood).length,
       sleep: c && c.total > 0 ? c.total / 60 : null, carbs: mac.carbs ?? null, protein: mac.protein ?? null, fat: mac.fat ?? null, fiber: mac.fiber ?? null,
       tags: new Set(((day && day.meals) || []).flatMap(x => x.tags || [])), flow: (day && day.period && day.period.flow) || 0,
-      night: bm.filter(b => b.night).length, water: (day && day.water) || 0, drinks: ((day && day.drinks) || []).length, cigs: ((day && day.cigs) || []).length, bloating: ci.bloating || 0, nausea: ci.nausea || 0, urges: ((day && day.urges) || []).length,
+      night: bm.filter(b => b.night).length, water: (day && day.water) || 0, drinks: ((day && day.drinks) || []).length, cigs: ((day && day.cigs) || []).length, bloating: ci.bloating || 0, nausea: ci.nausea || 0, urges: ((day && day.urges) || []).length, gas: ((day && day.gas) || []).length,
       sl: c && c.total > 0 ? { total: c.total, latency: c.latency, quality: day.sleep.quality ?? null, morning: morningScore(day.sleep), wakeOther: (day.sleep.pain || 0) + (day.sleep.other || 0), bed: toMin(day.sleep.inBed) >= 900 ? toMin(day.sleep.inBed) - 1440 : toMin(day.sleep.inBed) } : null,
     }, timingFeatures(date, day)));
   }
@@ -1467,17 +1765,19 @@ function viewTrends() {
       ${tile('Doses taken', due ? `${Math.round((taken / due) * 100)}%` : '–', due ? `${taken} of ${due} scheduled` : '')}
     </div>
     ${hasAny ? '' : '<section class="card"><p class="empty">Nothing logged in this period yet. Charts fill in as you log bathroom trips, check-ins, sleep and meals.</p></section>'}
+    ${weekCard()}
     ${hasAny ? standOutCard(rows) : ''}
     ${tCard('score', `<h2>${def.short} activity score</h2>`, `<span class="muted">${esc(def.long)}, estimated</span>`, `${scoreHeadline(rows)}<div class="chart" data-chart="score" aria-label="Chart of daily activity score"></div>
       <div class="chart-legend">${def.legend.map((l, i) => `<span><i class="b${i}"></i>${l}</span>`).join('')}${D().settings.trackCycle ? '<span><i class="period-swatch"></i>Period days</span>' : ''}</div>${periodCompare(rows)}`)}
     <div class="pair">
       ${tCard('trips', '<h2>Bathroom trips</h2>', '<span class="muted">per day</span>', `${bathroomHeadline(rows)}<div class="chart" data-chart="trips" aria-label="Chart of bathroom trips per day"></div>
-        <div class="chart-legend"><span><i style="background:var(--bar-neutral)"></i>Trips</span><span><i style="background:var(--blood)"></i>With blood</span></div>`)}
+        <div class="chart-legend"><span><i style="background:var(--bar-neutral)"></i>Trips</span><span><i style="background:var(--blood)"></i>With blood</span>${rows.some(r => r.gas) ? '<span><i style="background:var(--c-gas);border-radius:50%"></i>Gas (one dot each)</span>' : ''}</div>`)}
       ${tCard('sleepchart', '<h2>Sleep</h2>', '<span class="muted">hours asleep</span>', `${sleepHeadline(rows)}<div class="chart" data-chart="sleep" aria-label="Chart of hours slept per night"></div>
         <div class="chart-legend"><span><i style="background:var(--c-sleep)"></i>Hours asleep</span><span><i class="line" style="background:var(--muted)"></i>7-hour line</span></div>`)}
     </div>
     ${tCard('macros', '<h2>Carbs, protein, fat and fibre</h2>', '<span class="muted">average meal rating, 1–10</span>', `${macroHeadline(rows)}<div class="chart" data-chart="food" aria-label="Chart of daily carbs, protein, fat and fibre ratings"></div>
       <div class="chart-legend">${MACROS.map(([, l], i) => `<span><i class="line" style="background:var(--s${i + 1})"></i>${l}</span>`).join('')}</div>`)}
+    ${hydrationCard(rows)}
     ${habitsCard(rows)}
     ${tCard('food', '<h2>Food, drinks and next-day symptoms</h2>', '', triggerTable(rows))}
     ${tCard('meals', '<h2>Meals and symptoms a few hours later</h2>', symptomPicker(), mealSymptomBlock())}
@@ -1489,7 +1789,7 @@ function viewTrends() {
 }
 // The strongest next-day patterns from food and drinks, timing and sleep, each linking to its card.
 // Ranked by how sure we are, then by size. Alcohol and smoking are never described as helping.
-function standOutCard(rows) {
+function topPatterns(rows) {
   const m = nextDayMetric(), rank = { 'Strong pattern': 3, 'Likely pattern': 2, 'Early hint': 1 };
   const groups = [['food', 'Food and drinks', patternData(rows, triggerTests())], ['timing', 'Meal and medicine timing', patternData(rows, timingTests())], ['sleep', 'Sleep', patternData(rows, sleepTests(rows), true)]];
   const found = [];
@@ -1499,9 +1799,48 @@ function standOutCard(rows) {
     const conf = confidence(o.n, o.d, m.scale);
     found.push({ card, name, o, cls, conf, r: rank[conf] * 100 + Math.abs(o.d) });
   }
-  const top = found.sort((a, b) => b.r - a.r).slice(0, 3);
+  return found.sort((a, b) => b.r - a.r).slice(0, 3).map(f => Object.assign(f, { text: f.cls === 'up' ? m.worse(f.o) : m.better(f.o) }));
+}
+// The last 7 days next to the 7 before, in plain words and a few numbers.
+function weekCard() {
+  const rows = trendRows(7), prev = trendRows(7, addDays(today(), -7)), def = scoreDef(), st = D().settings;
+  const range = `${fmtDay(rows[0].date)} to ${fmtDay(today())}`;
+  if (rows.filter(r => hasEntries(r.day)).length < 3) return tCard('week', '<h2>Your week</h2>', `<span class="muted">${range}</span>`, '<p class="empty">Log on a few more days to see a summary of your week here.</p>');
+  const sc = rows.filter(r => r.score != null).map(r => r.score), psc = prev.filter(r => r.score != null).map(r => r.score);
+  const avg = round1(mean(sc)), pavg = round1(mean(psc)), d = avg != null && pavg != null ? round1(avg - pavg) : null;
+  const calm = rows.filter(r => r.score != null && band(r.score).i === 0).length;
+  const bmDays = rows.filter(r => r.trips), blood = rows.filter(r => r.blood).length;
+  const sleeps = rows.filter(r => r.sleep != null).map(r => r.sleep), waters = rows.filter(r => r.water).map(r => r.water);
+  const drinks = rows.reduce((a, r) => a + r.drinks, 0), cigs = rows.reduce((a, r) => a + r.cigs, 0), goal = st.waterGoal || 8;
+  const first = firstLogDate() || today();
+  let due = 0, taken = 0;
+  for (const r of rows) {
+    if (r.date < first || r.date >= today()) continue;
+    for (const m of Object.values(D().meds)) { const k = slotsFor(m, r.date).length; if (k) { due += k; taken += Math.min(k, takenCount(r.day, m.id)); } }
+  }
+  const words = [];
+  if (avg != null) words.push(d == null ? `Average ${def.short} this week: ${fmtNum(avg)}.` : d <= -1 ? `A calmer week than the one before: average ${def.short} ${fmtNum(avg)}, down from ${fmtNum(pavg)}.` : d >= 1 ? `A harder week than the one before: average ${def.short} ${fmtNum(avg)}, up from ${fmtNum(pavg)}.` : `About the same as the week before: average ${def.short} ${fmtNum(avg)}.`);
+  if (sc.length) words.push(`${calm} calm ${plural(calm, 'day', 'days')} out of ${sc.length} scored.`);
+  if (bmDays.length) words.push(blood ? `Blood on ${blood} ${plural(blood, 'day', 'days')}.` : 'No blood this week.');
+  const tile = (label, value, sub) => `<div class="tile"><span class="lbl">${label}</span><b>${value}</b><small>${sub || '&nbsp;'}</small></div>`;
+  const arrow = d == null ? '' : d <= -0.5 ? ` · down ${fmtNum(Math.abs(d))}` : d >= 0.5 ? ` · up ${fmtNum(d)}` : ' · about the same';
+  const b = avg != null ? band(avg) : null;
+  const tiles = [
+    tile(`Average ${def.short}`, avg != null ? `${fmtNum(avg)} <span class="band b${b.i}">${b.label}</span>` : '–', avg != null ? `last week ${pavg != null ? fmtNum(pavg) : '–'}${arrow}` : ''),
+    tile('Calm days', sc.length ? `${calm}` : '–', sc.length ? `of ${sc.length} scored` : ''),
+    tile('Bathroom trips', bmDays.length ? `${fmtNum(round1(mean(bmDays.map(r => r.trips))))}` : '–', bmDays.length ? `a day · blood on ${blood} ${plural(blood, 'day', 'days')}` : ''),
+    tile('Sleep', sleeps.length ? fmtDur(mean(sleeps) * 60) : '–', sleeps.length ? `average, ${sleeps.length} ${plural(sleeps.length, 'night', 'nights')}` : ''),
+    due ? tile('Doses taken', `${Math.round((taken / due) * 100)}%`, `${taken} of ${due}`) : '',
+    waters.length ? tile('Water', fmtNum(round1(mean(waters))), `glasses a day · goal ${goal}`) : '',
+    st.showAlcohol !== false ? tile('Alcohol', String(drinks), `${plural(drinks, 'drink', 'drinks')} this week`) : '',
+    st.showSmoking !== false && cigs ? tile('Smoking', String(cigs), `${plural(cigs, 'cigarette', 'cigarettes')} this week`) : '',
+  ].join('');
+  return tCard('week', '<h2>Your week</h2>', `<span class="muted">${range}</span>`, `${words.length ? `<p class="headline">${esc(words.join(' '))}</p>` : ''}<div class="tiles week-tiles">${tiles}</div>`);
+}
+function standOutCard(rows) {
+  const top = topPatterns(rows);
   const body = top.length
-    ? `<ul class="standout">${top.map(f => `<li class="${f.cls}"><span class="conf">${f.conf}</span><p>${esc(f.cls === 'up' ? m.worse(f.o) : m.better(f.o))}</p><button type="button" class="link-btn" data-act="jumpCard" data-k="${f.card}">See ${f.name.toLowerCase()} ${icon('right')}</button></li>`).join('')}</ul>
+    ? `<ul class="standout">${top.map(f => `<li class="${f.cls}"><span class="conf">${f.conf}</span><p>${esc(f.text)}</p><button type="button" class="link-btn" data-act="jumpCard" data-k="${f.card}">See ${f.name.toLowerCase()} ${icon('right')}</button></li>`).join('')}</ul>
       <p class="hint" style="margin-top:8px">Patterns in your own log, not proof of cause. Talk to your doctor before changing food or medicines.</p>`
     : '<p class="empty">Nothing stands out yet. After a couple of weeks of logging meals, sleep and symptoms, the clearest patterns show up here.</p>';
   return tCard('standout', '<h2>What stands out</h2>', '<span class="muted">next-day patterns</span>', body);
@@ -1773,13 +2112,15 @@ function scoreHeadline(rows) {
 }
 function bathroomHeadline(rows) {
   const bm = rows.filter(r => r.trips > 0);
-  if (!bm.length) return '';
+  if (!bm.length && !rows.some(r => r.gas)) return '';
   const bloodDays = bm.filter(r => r.blood > 0), last = bloodDays.length ? bloodDays[bloodDays.length - 1].date : null;
   const since = last ? daysBetween(last, today()) : null, nights = rows.filter(r => r.night > 0).length, urges = rows.reduce((a, r) => a + (r.urges || 0), 0);
-  const parts = [`About <strong>${fmtNum(round1(mean(bm.map(r => r.trips))))} trips</strong> a day.`];
-  parts.push(bloodDays.length ? `Blood on ${bloodDays.length} of ${bm.length} days${since >= 3 ? `, none in the last ${since} days` : ''}.` : 'No blood in this period.');
+  const parts = bm.length ? [`About <strong>${fmtNum(round1(mean(bm.map(r => r.trips))))} trips</strong> a day.`] : [];
+  if (bm.length) parts.push(bloodDays.length ? `Blood on ${bloodDays.length} of ${bm.length} days${since >= 3 ? `, none in the last ${since} days` : ''}.` : 'No blood in this period.');
   if (nights) parts.push(`Woke for the bathroom on ${nights} ${plural(nights, 'night', 'nights')}.`);
-  if (urges) parts.push(`Plus ${urges} ${plural(urges, 'urge', 'urges')} where nothing came.`);
+  const gas = rows.reduce((a, r) => a + (r.gas || 0), 0), gasToo = rows.reduce((a, r) => a + ((r.day && r.day.bm) || []).filter(b => b.gas).length, 0);
+  if (urges || gas) parts.push(`Plus ${[urges ? `${urges} ${plural(urges, 'urge', 'urges')} where nothing came` : '', gas ? `passed gas ${gas} ${plural(gas, 'time', 'times')}` : ''].filter(Boolean).join(', and ')}.`);
+  if (gasToo) parts.push(`Gas with ${gasToo} ${plural(gasToo, 'trip', 'trips')}.`);
   return `<p class="headline">${parts.join(' ')}</p>`;
 }
 function sleepHeadline(rows) {
@@ -1824,8 +2165,8 @@ function dailyTable(rows) {
   const r = rows.slice().reverse().filter(x => x.score != null || x.trips || x.sleep != null || x.drinks || x.cigs || MACROS.some(([k]) => x[k] != null));
   if (!r.length) return '<p class="empty" style="margin-top:8px">Nothing logged in this period.</p>';
   const v = x => (x == null ? '–' : fmtNum(round1(x)));
-  return `<div class="tbl-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>Day</th><th>${scoreDef().short}</th><th>Trips</th><th>With blood</th><th>Sleep</th><th>Carbs</th><th>Protein</th><th>Fat</th><th>Fibre</th><th>Water</th><th>Urges</th><th>Bloating</th><th>Nausea</th>${D().settings.showAlcohol !== false ? '<th>Drinks</th>' : ''}${D().settings.showSmoking !== false ? '<th>Cigarettes</th>' : ''}${D().settings.trackCycle ? '<th>Period</th>' : ''}</tr></thead><tbody>
-    ${r.map(x => `<tr><td>${fmtDay(x.date)}</td><td>${v(x.score)}</td><td>${x.trips}</td><td>${x.blood}</td><td>${x.sleep != null ? fmtDur(x.sleep * 60) : '–'}</td><td>${v(x.carbs)}</td><td>${v(x.protein)}</td><td>${v(x.fat)}</td><td>${v(x.fiber)}</td><td>${x.water || '–'}</td><td>${x.urges || '–'}</td><td>${Math.round(x.bloating) ? SEVERITY[Math.round(x.bloating)] : '–'}</td><td>${Math.round(x.nausea) ? SEVERITY[Math.round(x.nausea)] : '–'}</td>${D().settings.showAlcohol !== false ? `<td>${x.drinks}</td>` : ''}${D().settings.showSmoking !== false ? `<td>${x.cigs}</td>` : ''}${D().settings.trackCycle ? `<td>${x.flow ? FLOW[x.flow] : '–'}</td>` : ''}</tr>`).join('')}
+  return `<div class="tbl-wrap" style="margin-top:10px"><table class="tbl"><thead><tr><th>Day</th><th>${scoreDef().short}</th><th>Trips</th><th>With blood</th><th>Sleep</th><th>Carbs</th><th>Protein</th><th>Fat</th><th>Fibre</th><th>Water</th><th>Urges</th><th>Gas</th><th>Bloating</th><th>Nausea</th>${D().settings.showAlcohol !== false ? '<th>Drinks</th>' : ''}${D().settings.showSmoking !== false ? '<th>Cigarettes</th>' : ''}${D().settings.trackCycle ? '<th>Period</th>' : ''}</tr></thead><tbody>
+    ${r.map(x => `<tr><td>${fmtDay(x.date)}</td><td>${v(x.score)}</td><td>${x.trips}</td><td>${x.blood}</td><td>${x.sleep != null ? fmtDur(x.sleep * 60) : '–'}</td><td>${v(x.carbs)}</td><td>${v(x.protein)}</td><td>${v(x.fat)}</td><td>${v(x.fiber)}</td><td>${x.water || '–'}</td><td>${x.urges || '–'}</td><td>${x.gas || '–'}</td><td>${Math.round(x.bloating) ? SEVERITY[Math.round(x.bloating)] : '–'}</td><td>${Math.round(x.nausea) ? SEVERITY[Math.round(x.nausea)] : '–'}</td>${D().settings.showAlcohol !== false ? `<td>${x.drinks}</td>` : ''}${D().settings.showSmoking !== false ? `<td>${x.cigs}</td>` : ''}${D().settings.trackCycle ? `<td>${x.flow ? FLOW[x.flow] : '–'}</td>` : ''}</tr>`).join('')}
   </tbody></table></div>`;
 }
 
@@ -1887,7 +2228,7 @@ function chartScore(el, rows) {
 }
 function chartTrips(el, rows) {
   const max = Math.max(0, ...rows.map(r => r.trips));
-  if (!max) return emptyChart(el, 'Log bathroom trips to see them here.');
+  if (!max && !rows.some(r => r.gas)) return emptyChart(el, 'Log bathroom trips to see them here.');
   const yMax = Math.max(4, Math.ceil(max / 2) * 2), f = frame(el, rows, yMax, { step: niceStep(yMax, 4) });
   const w = Math.max(1.5, f.step * 0.62);
   let bars = '';
@@ -1900,7 +2241,8 @@ function chartTrips(el, rows) {
       if (clean) bars += `<rect x="${x0}" y="${yMid + 1}" width="${w}" height="${Math.max(0, base - yMid - 1)}" style="fill:var(--bar-neutral)"/>`;
     } else bars += `<path d="${topRounded(x0, yTop, w, base - yTop, 4)}" style="fill:var(--bar-neutral)"/>`;
   });
-  const tip = r => `${fmtDay(r.date)}\n${r.trips ? `${r.trips} ${plural(r.trips, 'trip', 'trips')}${r.blood ? `, ${r.blood} with blood` : ''}` : 'No trips logged'}`;
+  rows.forEach((r, i) => { for (let k = 0; k < Math.min(r.gas || 0, 6); k++) bars += `<circle cx="${f.x(i)}" cy="${f.y(r.trips) - 6 - k * 7}" r="2.6" style="fill:var(--c-gas)"/>`; });
+  const tip = r => `${fmtDay(r.date)}\n${r.trips ? `${r.trips} ${plural(r.trips, 'trip', 'trips')}${r.blood ? `, ${r.blood} with blood` : ''}` : 'No trips logged'}${r.gas ? `\nGas ${r.gas} ${plural(r.gas, 'time', 'times')}` : ''}`;
   el.innerHTML = svgWrap(f, `${f.grid}${bars}${f.hits(tip)}`);
 }
 function chartSleep(el, rows) {
@@ -1932,22 +2274,35 @@ function chartFood(el, rows) {
   const tip = r => `${fmtDay(r.date)}\n${!MACROS.some(([k]) => r[k] != null) ? 'No meals rated' : MACROS.map(([k, l]) => `${l} ${r[k] != null ? fmtNum(r[k]) : '–'}`).join(' · ')}`;
   el.innerHTML = svgWrap(f, `${f.grid}${body}${f.hits(tip)}`);
 }
-// ---------- water, alcohol and smoking ----------
+// ---------- hydration ----------
+// Water against the goal, plus how much was drunk on days with loose or watery stools (which lose fluid).
+function hydrationCard(rows) {
+  const goal = D().settings.waterGoal || 8, wd = rows.filter(r => r.water > 0);
+  if (!wd.length) return tCard('hydration', '<h2>Hydration</h2>', '<span class="muted">glasses of water a day</span>', '<p class="empty">Add glasses with the water counter on Today to see your hydration here.</p>');
+  const met = wd.filter(r => r.water >= goal).length, avg = round1(mean(wd.map(r => r.water)));
+  const loose = r => ((r.day && r.day.bm) || []).some(b => (b.bristol || 0) >= 6 || (b.watery ?? -1) >= 3);
+  const L = wd.filter(loose), O = wd.filter(r => !loose(r)), la = round1(mean(L.map(r => r.water))), oa = round1(mean(O.map(r => r.water)));
+  const tip = L.length >= 3 && O.length >= 3
+    ? `<p class="hydra-tip">On days with loose or watery stools you drank <strong>${fmtNum(la)} ${plural(la, 'glass', 'glasses')}</strong>, compared with <strong>${fmtNum(oa)}</strong> on other days. ${la < oa - 0.4 ? 'Loose stools lose fluid, so those are the days to drink a little more.' : la > oa + 0.4 ? 'Good: loose stools lose fluid, so drinking more on those days helps.' : 'Loose stools lose fluid, so an extra glass or two on those days helps.'}</p>` : '';
+  let run = 0, best = 0;
+  for (const r of rows) { run = r.water >= goal ? run + 1 : 0; best = Math.max(best, run); }
+  const wk = rows.slice(-7).filter(r => r.water > 0), low = wd.filter(r => r.water <= 2).length;
+  const mini = (v, l) => `<div><b>${v}</b><span>${l}</span></div>`;
+  return tCard('hydration', '<h2>Hydration</h2>', '<span class="muted">glasses of water a day</span>', `<p class="headline">About <strong>${fmtNum(avg)} ${plural(avg, 'glass', 'glasses')}</strong> a day. You reached your goal of ${goal} on <strong>${met} of ${wd.length} ${plural(wd.length, 'day', 'days')}</strong>.</p>
+    <div class="chart chart-sm" data-chart="water" aria-label="Chart of glasses of water per day"></div>
+    <div class="chart-legend"><span><i style="background:var(--c-water)"></i>Reached your goal</span><span><i style="background:var(--c-water-soft)"></i>Under your goal</span><span><i class="line" style="background:var(--muted)"></i>Goal (${goal})</span></div>
+    ${tip}<div class="mini-stats">${mini(wk.length ? fmtNum(round1(mean(wk.map(r => r.water)))) : '–', 'a day, last 7 days')}${mini(`${best} ${plural(best, 'day', 'days')}`, 'longest run at goal')}${mini(low, 'days with 2 or fewer')}</div>`);
+}
+// ---------- alcohol and smoking ----------
 function habitsCard(rows) {
-  const st = D().settings, showA = st.showAlcohol !== false, showS = st.showSmoking !== false, goal = st.waterGoal || 8;
-  return tCard('habits', `<h2>Water${showA ? ', alcohol' : ''}${showS ? ' and smoking' : ''}</h2>`, '', `${habitsHeadline(rows)}
-    <p class="sublbl chart-title">Water, glasses a day</p><div class="chart chart-sm" data-chart="water" aria-label="Chart of glasses of water per day"></div>
-    <div class="chart-legend"><span><i style="background:var(--c-water)"></i>Glasses</span><span><i class="line" style="background:var(--muted)"></i>Your goal (${goal})</span></div>
+  const st = D().settings, showA = st.showAlcohol !== false, showS = st.showSmoking !== false;
+  if (!showA && !showS) return '';
+  return tCard('habits', `<h2>${showA && showS ? 'Alcohol and smoking' : showA ? 'Alcohol' : 'Smoking'}</h2>`, '', `${habitsHeadline(rows)}
     ${showA ? '<p class="sublbl chart-title">Alcohol, drinks a day</p><div class="chart chart-sm" data-chart="drinks" aria-label="Chart of alcoholic drinks per day"></div>' : ''}
     ${showS ? '<p class="sublbl chart-title">Smoking, cigarettes a day</p><div class="chart chart-sm" data-chart="cigs" aria-label="Chart of cigarettes per day"></div>' : ''}`);
 }
 function habitsHeadline(rows) {
-  const st = D().settings, goal = st.waterGoal || 8, parts = [];
-  const wd = rows.filter(r => r.water > 0);
-  if (wd.length) {
-    const under = wd.filter(r => r.water < goal).length;
-    parts.push(`About <strong>${fmtNum(round1(mean(wd.map(r => r.water))))} glasses of water</strong> a day${under ? `, under your goal of ${goal} on ${under} of ${wd.length} days` : `, at or above your goal of ${goal} every day you logged`}.`);
-  }
+  const st = D().settings, parts = [];
   if (st.showAlcohol !== false) {
     const ad = rows.filter(r => r.drinks > 0), total = ad.reduce((a, r) => a + r.drinks, 0);
     parts.push(ad.length ? `Alcohol on ${ad.length} ${plural(ad.length, 'day', 'days')} (${total} ${plural(total, 'drink', 'drinks')} in total).` : 'No alcohol logged.');
@@ -1956,18 +2311,18 @@ function habitsHeadline(rows) {
     const sd = rows.filter(r => r.cigs > 0);
     parts.push(sd.length ? `Smoked on ${sd.length} ${plural(sd.length, 'day', 'days')}, about ${fmtNum(round1(mean(sd.map(r => r.cigs))))} a day when you did.` : 'No smoking logged.');
   }
-  if (!wd.length && !rows.some(r => r.drinks || r.cigs)) return '<p class="headline">Use the water, alcohol and smoking counters on Today to see them here.</p>';
+  if (!rows.some(r => r.drinks || r.cigs)) return '<p class="headline">Use the alcohol and smoking counters on Today to see them here.</p>';
   return `<p class="headline">${parts.join(' ')}</p>`;
 }
 // One series per chart, bars per day; water also gets a dashed goal line.
-function chartCount(el, rows, key, color, unit, empty, goal) {
+function chartCount(el, rows, key, color, unit, empty, goal, metColor) {
   const max = Math.max(0, ...rows.map(r => r[key] || 0));
   if (!max) return emptyChart(el, empty);
   const yMax = Math.max(goal ? goal + 2 : 4, Math.ceil(max / 2) * 2);
   const f = frame(el, rows, yMax, { h: 140, step: niceStep(yMax, 3), r: goal ? 44 : 10 });
   const w = Math.max(1.5, f.step * 0.62);
   let bars = '';
-  rows.forEach((r, i) => { const v = r[key] || 0; if (v) bars += `<path d="${topRounded(f.x(i) - w / 2, f.y(v), w, f.y(0) - f.y(v), 4)}" style="fill:${color}"/>`; });
+  rows.forEach((r, i) => { const v = r[key] || 0; if (v) bars += `<path d="${topRounded(f.x(i) - w / 2, f.y(v), w, f.y(0) - f.y(v), 4)}" style="fill:${metColor && v >= goal ? metColor : color}"/>`; });
   const ref = goal ? `<line x1="${f.m.l}" x2="${f.W - f.m.r}" y1="${f.y(goal)}" y2="${f.y(goal)}" style="stroke:var(--muted);stroke-width:1.5;stroke-dasharray:4 4"/><text x="${f.W - f.m.r + 4}" y="${f.y(goal) + 4}">Goal ${goal}</text>` : '';
   const tip = r => `${fmtDay(r.date)}\n${r[key] ? `${r[key]} ${plural(r[key], unit[0], unit[1])}` : `None logged`}`;
   el.innerHTML = svgWrap(f, `${f.grid}${bars}${ref}${f.hits(tip)}`);
@@ -1977,7 +2332,7 @@ function drawCharts() {
   if (!rows) return;
   const fns = {
     score: chartScore, trips: chartTrips, sleep: chartSleep, food: chartFood,
-    water: (el, r) => chartCount(el, r, 'water', 'var(--c-water)', ['glass', 'glasses'], 'Log water on Today to see it here.', D().settings.waterGoal || 8),
+    water: (el, r) => chartCount(el, r, 'water', 'var(--c-water-soft)', ['glass', 'glasses'], 'Log water on Today to see it here.', D().settings.waterGoal || 8, 'var(--c-water)'),
     drinks: (el, r) => chartCount(el, r, 'drinks', 'var(--c-meal)', ['drink', 'drinks'], 'No alcohol logged in this period.'),
     cigs: (el, r) => chartCount(el, r, 'cigs', 'var(--muted)', ['cigarette', 'cigarettes'], 'No smoking logged in this period.'),
   };
@@ -2011,6 +2366,7 @@ function openSheet({ title, body, onSave, onDelete, onInput, saveLabel = 'Save',
   form.addEventListener('input', changed);
   applyWhen(form);
   if (onInput) onInput(form, null);
+  initWheels(form);
   requestAnimationFrame(() => form.focus({ preventScroll: true }));
 }
 // Lists with a height limit scroll; the bottom edge fades while there's more below.
@@ -2044,7 +2400,7 @@ function applyWhen(form) {
 const fid = name => `f-${name}`;
 function field(label, control, attrs = '') { return `<label class="field" ${attrs}><span class="lbl">${label}</span>${control}</label>`; }
 function group(label, control, attrs = '') { return `<fieldset class="field" ${attrs}><legend class="lbl">${label}</legend>${control}</fieldset>`; }
-function timeInput(name, value, req = true) { return `<input type="time" name="${name}" id="${fid(name)}" value="${esc(value || '')}" ${req ? 'required' : ''}>`; }
+function timeInput(name, value) { return timeCols(name, 'Time', value); }
 function textInput(name, value, ph = '', extra = '') { return `<input type="text" name="${name}" id="${fid(name)}" value="${esc(value || '')}" placeholder="${esc(ph)}" autocomplete="off" ${extra}>`; }
 function numInput(name, value, extra = '') { return `<input type="number" name="${name}" id="${fid(name)}" value="${value ?? ''}" inputmode="decimal" step="any" ${extra}>`; }
 function seg(name, labels, value, { values, cls = '' } = {}) {
@@ -2101,40 +2457,56 @@ function isNightTime(hm, date) {
   if (pend && date === today() && pend.date === date) return true;
   return m != null && (m >= 23 * 60 || m < 6 * 60);
 }
-// "Felt the need, but nothing came" is saved in `urges`, never in `bm`, so trip counts and the score stay standard.
-function sheetBm(date, entry, isUrge = false) {
+// "Nothing came" is saved in `urges` and "Just gas" in `gas`, never in `bm`, so trip counts and the score stay standard.
+const BM_KINDS = [['bm', 'Bowel movement'], ['urge', 'Nothing came'], ['gas', 'Just gas']];
+const BM_LIST = { bm: 'bm', urge: 'urges', gas: 'gas' };
+function sheetBm(date, entry, kind = 'bm') {
   const prev = (getDay(date).bm || []).slice(-1)[0];
   const t = entry ? entry.t : defTime(date);
   const e = Object.assign({ bristol: prev ? prev.bristol : 4, blood: 0 }, entry || { id: uid(), t, urgency: 0, pain: 0, night: isNightTime(t, date), note: '' });
   const bristol = `<div class="bristol">${[1, 2, 3, 4, 5, 6, 7].map(n => `<label><input type="radio" name="bristol" value="${n}" ${n === e.bristol ? 'checked' : ''}><span><b>${n}</b><small>${BRISTOL[n]}</small></span></label>`).join('')}</div>`;
   openSheet({
-    title: entry ? (isUrge ? 'Edit urge' : 'Edit bathroom trip') : 'Bathroom trip',
-    body: `<div class="row2">${field('Time', timeInput('t', e.t))}<label class="toggle"><input type="checkbox" name="night" id="f-night" ${e.night ? 'checked' : ''}><span>Woke me up at night</span></label></div>
-      <label class="toggle"><input type="checkbox" name="urge" id="f-urge" ${isUrge ? 'checked' : ''}><span>Felt the need, but nothing came</span></label>
-      <p class="hint" data-when="urge:on">Saved as an urge, not a bathroom trip, so it doesn't change your trip count or score.</p>
-      <div class="field" data-when="urge:">${group('Stool type <span class="hint">Bristol scale</span>', bristol + '<span class="hint">3–4 is typical. 6–7 means loose or watery.</span>')}</div>
-      <div class="field" data-when="urge:">${group('Blood', seg('blood', BLOOD, e.blood, { cls: 'blood' }))}</div>
-      <label class="toggle" data-when="urge:"><input type="checkbox" name="mucus" id="f-mucus" ${e.mucus ? 'checked' : ''}><span>Mucus</span></label>
+    title: entry ? { bm: 'Edit bathroom trip', urge: 'Edit urge', gas: 'Edit gas' }[kind] : 'Bathroom trip',
+    body: `${group('What happened?', seg('what', BM_KINDS.map(x => x[1]), kind, { values: BM_KINDS.map(x => x[0]) }))}
+      <div class="row2">${timeWheel('t', 'Time', e.t)}<label class="toggle"><input type="checkbox" name="night" id="f-night" ${e.night ? 'checked' : ''}><span>Woke me up at night</span></label></div>
+      <p class="hint" data-when="what:urge">Saved as an urge, not a bathroom trip, so it doesn't change your trip count or score.</p>
+      <p class="hint" data-when="what:gas">Saved as gas, not a bathroom trip, so it doesn't change your trip count or score.</p>
+      <div class="field" data-when="what:bm">${group('Stool type <span class="hint">Bristol scale</span>', bristol + '<span class="hint">3–4 is typical. 6–7 means loose or watery.</span>')}</div>
+      <div class="field" data-when="what:bm">${group('How watery <span class="hint">optional, tap again to clear</span>', seg('watery', WATERY, e.watery ?? '', { values: WATERY.map((w, i) => i), cls: 'clearable' }))}</div>
+      <div class="field" data-when="what:bm">${group('Blood', seg('blood', BLOOD, e.blood, { cls: 'blood' }))}</div>
+      <div class="bm-wheels" data-when="what:bm"><div data-when="blood:1,2,3">${wordWheel('bloodAmt', 'How much blood', AMOUNT.slice(1).map((w, i) => [i + 1, w]), e.bloodAmt)}</div></div>
+      <div class="field" data-when="what:bm">${group('Mucus', seg('mucusLvl', MUCUS, mucusLevel(e), { values: MUCUS.map((w, i) => i) }))}</div>
+      <label class="toggle" data-when="what:bm"><input type="checkbox" name="gasToo" id="f-gastoo" ${e.gas ? 'checked' : ''}><span>Passed gas too</span></label>
       ${group('Urgency', seg('urgency', URGENCY, e.urgency))}
       <div class="field"><label class="lbl" for="f-pain">Pain or cramping (0–10)</label>${range('pain', 0, 10, e.pain)}</div>
-      ${hasIron() ? '<p class="sub-note" data-when="urge:">You take iron, which often turns stool dark or black. Mention any change you are unsure about to your doctor.</p>' : ''}
+      ${hasIron() ? '<p class="sub-note" data-when="what:bm">You take iron, which often turns stool dark or black. Mention any change you are unsure about to your doctor.</p>' : ''}
       ${noteField(e.note)}`,
     onInput: (form, ev) => {
+      syncWheels(form);
       if (!ev) return;
       if (ev.target.name === 'night') form.dataset.nightTouched = '1';
       if (ev.target.name === 't' && !form.dataset.nightTouched) form.elements.night.checked = isNightTime(ev.target.value, date);
     },
     onSave: fd => {
-      const urge = fd.get('urge') === 'on';
+      const what = BM_LIST[fd.get('what')] ? fd.get('what') : 'bm', urge = what !== 'bm';
       const x = { id: e.id, t: fd.get('t'), urgency: Number(fd.get('urgency')) || 0, pain: Number(fd.get('pain')) || 0, night: fd.get('night') === 'on', note: (fd.get('note') || '').trim() };
-      if (!urge) Object.assign(x, { bristol: Number(fd.get('bristol')) || null, blood: Number(fd.get('blood')) || 0, mucus: fd.get('mucus') === 'on' });
+      const ml = Number(fd.get('mucusLvl')) || 0;
+      if (!urge) Object.assign(x, { bristol: Number(fd.get('bristol')) || null, blood: Number(fd.get('blood')) || 0, mucus: ml > 0 });
+      if (!urge && ml) x.mucusLvl = ml;
+      if (!urge && fd.get('gasToo') === 'on') x.gas = true;
+      // Amounts are kept only when they apply: blood amount with blood, mucus amount with mucus.
+      const amt = k => (fd.get(k) === '' || fd.get(k) == null ? null : Number(fd.get(k)));
+      if (!urge) {
+        if (x.blood && amt('bloodAmt') != null) x.bloodAmt = amt('bloodAmt');
+        if (amt('watery') != null) x.watery = amt('watery');
+      }
       mutDay(date, d => {
-        d.bm = d.bm.filter(y => y.id !== e.id); d.urges = d.urges.filter(y => y.id !== e.id);
-        (urge ? d.urges : d.bm).push(x);
+        for (const k of Object.values(BM_LIST)) d[k] = d[k].filter(y => y.id !== e.id);
+        d[BM_LIST[what]].push(x);
       });
-      if (!entry) toast(urge ? 'Urge logged. It isn\'t counted as a trip.' : 'Bathroom trip logged');
+      if (!entry) toast({ bm: 'Bathroom trip logged', urge: 'Urge logged. It isn\'t counted as a trip.', gas: 'Gas logged. It isn\'t counted as a trip.' }[what]);
     },
-    onDelete: entry ? () => removeEntry(date, isUrge ? 'urges' : 'bm', e.id, isUrge ? 'urge' : 'bathroom trip') : null,
+    onDelete: entry ? () => removeEntry(date, BM_LIST[kind], e.id, { bm: 'bathroom trip', urge: 'urge', gas: 'gas entry' }[kind]) : null,
   });
 }
 
@@ -2552,7 +2924,7 @@ function sheetMeal(date, entry) {
     body: `${yday.length ? group('From yesterday', `<div class="favs" data-fade>${yday.map(m => `<button type="button" class="chip-btn" data-act="useYday" data-id="${m.id}">${esc(m.type ? `${m.type} · ${m.desc}` : m.desc)}</button>`).join('')}</div>`) : ''}
       ${!entry && favs.length ? group('Favourites', `<div class="favs" data-fade>${favs.map((f, i) => `<button type="button" class="chip-btn" data-act="useFav" data-i="${i}">${esc(f.desc)}</button>`).join('')}</div>`) : ''}
       ${!entry && (yday.length || favs.length) ? '<p class="hint" style="margin-top:-6px">Tap one to fill the form with everything you logged then.</p>' : ''}
-      <div class="row2">${field('Time', timeInput('t', e.t))}${field('Portion', `<select name="portion" id="f-portion">${PORTIONS.map(p => `<option ${p === e.portion ? 'selected' : ''}>${p}</option>`).join('')}</select>`)}</div>
+      <div class="row2">${timeWheel('t', 'Time', e.t)}${field('Portion', `<select name="portion" id="f-portion">${PORTIONS.map(p => `<option ${p === e.portion ? 'selected' : ''}>${p}</option>`).join('')}</select>`)}</div>
       ${group('Type', seg('type', MEAL_TYPES, e.type, { values: MEAL_TYPES }))}
       ${field('What did you have?', textInput('desc', e.desc, 'e.g. Rice, dal and curd', 'required list="meal-list"') + `<datalist id="meal-list">${recent.map(r => `<option value="${esc(r)}"></option>`).join('')}</datalist>`)}
       ${entry ? '' : `<p class="sug-note" data-suggest-note hidden></p>
@@ -2681,7 +3053,8 @@ function sheetEx(date, entry) {
   openSheet({
     title: entry ? 'Edit exercise' : 'Exercise',
     body: `${group('Activity', seg('type', EX_TYPES, e.type, { values: EX_TYPES }))}
-      <div class="row3">${field('Started', timeInput('t', e.t))}${field('Minutes', numInput('mins', e.mins, 'min="1" max="600" required'))}${field('Steps', numInput('steps', e.steps, 'min="0" placeholder="Optional"'))}</div>
+      ${timeWheel('t', 'Started', e.t)}
+      <div class="row2">${field('Minutes', numInput('mins', e.mins, 'min="1" max="600" required'))}${field('Steps', numInput('steps', e.steps, 'min="0" placeholder="Optional"'))}</div>
       ${group('Intensity', seg('intensity', INTENSITY, e.intensity, { values: INTENSITY }))}
       ${group('Energy before', scale5('before', e.before, 'drained', 'full of energy'))}
       ${group('Energy after', scale5('after', e.after, 'drained', 'full of energy'))}
@@ -2700,7 +3073,7 @@ function sheetNap(date, entry) {
   const e = entry || { id: uid(), t: date === today() ? fromMin(toMin(nowHM()) - 30) : '15:00', mins: 30, note: '' };
   openSheet({
     title: entry ? 'Edit nap' : 'Nap',
-    body: `<div class="row2">${field('Started', timeInput('t', e.t))}${field('Minutes', numInput('mins', e.mins, 'min="1" max="600" required'))}</div>${noteField(e.note)}`,
+    body: `<div class="row2">${timeWheel('t', 'Started', e.t)}${field('Minutes', numInput('mins', e.mins, 'min="1" max="600" required'))}</div>${noteField(e.note)}`,
     onSave: fd => { upsertEntry(date, 'naps', { id: e.id, t: fd.get('t'), mins: num(fd.get('mins')) || 0, note: (fd.get('note') || '').trim() }); if (!entry) toast('Nap logged'); },
     onDelete: entry ? () => removeEntry(date, 'naps', e.id, 'nap') : null,
   });
@@ -2713,7 +3086,7 @@ function sheetCheckin(date, entry) {
   const wu = D().settings.weightUnit || 'kg';
   openSheet({
     title: entry ? 'Edit check-in' : list.length ? 'Another check-in' : 'Daily check-in',
-    body: `${field('Time', timeInput('t', e.t))}
+    body: `${timeWheel('t', 'Time', e.t)}
       ${list.length && !entry ? `<p class="hint">You've checked in ${list.length} ${plural(list.length, 'time', 'times')} today. The day's score uses the average of your check-ins.</p>` : ''}
       ${group('Overall, how have you felt today?', seg('wellbeing', WELLBEING, e.wellbeing ?? 0))}
       <div class="field"><label class="lbl" for="f-pain">Belly pain (0–10)</label>${range('pain', 0, 10, e.pain)}</div>
@@ -2754,7 +3127,7 @@ function sheetDose(date, opts = {}) {
     title: existing ? 'Edit dose' : 'Log a dose',
     body: `${who}
       ${group('Status', seg('status', ['Taken', 'Skipped'], d.status, { values: ['taken', 'skipped'] }))}
-      <div class="row2">${field('Time', timeInput('t', d.t))}${field(`Amount (<span data-unit>${esc(unitOf(m0))}</span>)`, numInput('amount', d.amount, 'min="0"'), 'data-when="status:taken"')}</div>
+      <div class="row2">${timeWheel('t', 'Time', d.t)}${field(`Amount (<span data-unit>${esc(unitOf(m0))}</span>)`, numInput('amount', d.amount, 'min="0"'), 'data-when="status:taken"')}</div>
       ${field('Why was it skipped?', `<select name="reason" id="f-reason">${SKIP_REASONS.map(r => `<option ${r === d.reason ? 'selected' : ''}>${r}</option>`).join('')}</select>`, 'data-when="status:skipped"')}
       <div data-prn ${m0 && m0.schedule && m0.schedule.type === 'prn' ? '' : 'hidden'}>${field('What was it for?', textInput('why', d.why, 'e.g. Loose stools before travel'))}</div>
       <div data-site ${m0 && m0.form === 'injection' ? '' : 'hidden'}>${group(`Injection site${site0.last ? ` <span class="hint">last time: ${esc(site0.last)}</span>` : ''}`, seg('site', SITES, d.site, { values: SITES }))}</div>
@@ -2813,43 +3186,90 @@ function sheetDoseGroup(date, ids) {
 }
 
 /* ---------- sleep ---------- */
-// A 0–10 count picked by swiping a vertical wheel (or tapping a number, or arrow keys). The value goes in a hidden input.
-const WHEEL_H = 40;
+// Vertical wheels: swipe, tap a value, or use the arrow keys. Each column fires a "pick" event when its value changes.
+const WHEEL_H = 28;
+// Phones set to a 12-hour clock get hour, minute and AM/PM wheels; others get 0–23 and minutes.
+const H12 = (() => { try { return new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions().hour12 !== false; } catch (e) { return true; } })();
+function wheelCol(items, value, label) {
+  const i = Math.max(0, items.findIndex(([v]) => String(v) === String(value)));
+  return `<div class="wheel" tabindex="0" role="spinbutton" aria-label="${esc(label)}" aria-valuetext="${esc(items[i][1])}" data-v="${esc(items[i][0])}">
+    <div class="wheel-band" aria-hidden="true"></div><div class="wheel-pad"></div>${items.map(([v, t], k) => `<div class="wheel-item ${k === i ? 'on' : ''}" data-v="${esc(v)}">${esc(t)}</div>`).join('')}<div class="wheel-pad"></div></div>`;
+}
+// A 0–10 count (it grows if an older entry has more).
 function wheel(name, label, value, max = 10) {
   const top = Math.max(max, value);
-  return `<div class="field wheel-field"><span class="lbl" id="l-${name}">${label}</span>
-    <div class="wheel" data-wheel="${name}" tabindex="0" role="spinbutton" aria-labelledby="l-${name}" aria-valuemin="0" aria-valuemax="${top}" aria-valuenow="${value}">
-      <div class="wheel-band" aria-hidden="true"></div><div class="wheel-pad"></div>${Array.from({ length: top + 1 }, (_, i) => `<div class="wheel-item ${i === value ? 'on' : ''}" data-v="${i}">${i}</div>`).join('')}<div class="wheel-pad"></div>
-    </div><input type="hidden" name="${name}" value="${value}"></div>`;
+  return `<div class="field wheel-field" data-wheel-field><span class="lbl">${label}</span>${wheelCol(Array.from({ length: top + 1 }, (_, i) => [i, String(i)]), value, label)}<input type="hidden" name="${name}" value="${value}"></div>`;
 }
+// A wheel of words that starts at "–" (not answered). `items` is [[value, word], ...].
+function wordWheel(name, label, items, value) {
+  const v = value == null ? '' : value;
+  return `<div class="field wheel-field" data-wheel-field><span class="lbl">${label}</span>${wheelCol([['', '–']].concat(items), v, label).replace('class="wheel"', 'class="wheel words"')}<input type="hidden" name="${name}" value="${v}"></div>`;
+}
+// A time of day on wheels: hour, minutes in 5-minute steps (plus the exact minute already set, so nothing is rounded)
+// and AM/PM on 12-hour phones. The value is kept as HH:MM in a hidden input.
+function timeCols(name, label, hm, attrs = '') {
+  const m = (toMin(hm) ?? toMin(nowHM())) % 1440, h = Math.floor(m / 60), mm = m % 60;
+  const steps = Array.from({ length: 12 }, (_, i) => i * 5);
+  if (!steps.includes(mm)) steps.push(mm);
+  const mins = steps.sort((x, y) => x - y).map(x => [x, pad(x)]);
+  const cols = H12
+    ? wheelCol(Array.from({ length: 12 }, (_, i) => [i + 1, String(i + 1)]), h % 12 || 12, `${label}, hour`) + '<span class="tw-colon">:</span>' + wheelCol(mins, mm, `${label}, minutes`) + wheelCol([['AM', 'AM'], ['PM', 'PM']], h >= 12 ? 'PM' : 'AM', `${label}, AM or PM`)
+    : wheelCol(Array.from({ length: 24 }, (_, i) => [i, pad(i)]), h, `${label}, hour`) + '<span class="tw-colon">:</span>' + wheelCol(mins, mm, `${label}, minutes`);
+  return `<div class="time-wheel" data-time-wheel><button type="button" class="time-pill" data-act="timeOpen" aria-expanded="false" aria-label="${esc(label)}: ${esc(fmtTime(fromMin(m)))}. Change"><span data-time-text>${esc(fmtTime(fromMin(m)))}</span><small>Change</small></button>
+    <div class="tw-cols ${H12 ? 'h12' : ''}" hidden>${cols}</div><input type="hidden" name="${name}" value="${fromMin(m)}" ${attrs}></div>`;
+}
+function timeWheel(name, label, hm) { return `<div class="field"><span class="lbl">${label}</span>${timeCols(name, label, hm)}</div>`; }
 function initWheels(root) {
-  root.querySelectorAll('[data-wheel]').forEach(w => {
-    const input = w.parentElement.querySelector('input[type=hidden]'), items = [...w.querySelectorAll('.wheel-item')];
+  root.querySelectorAll('.wheel').forEach(w => {
+    if (w.dataset.on) return;
+    w.dataset.on = '1';
+    const items = [...w.querySelectorAll('.wheel-item')];
+    const idx = () => Math.max(0, items.findIndex(x => x.dataset.v === w.dataset.v));
     const set = i => {
       i = clamp(i, 0, items.length - 1);
-      if (String(i) === input.value) return;
-      input.value = i; w.setAttribute('aria-valuenow', i);
-      items.forEach(x => x.classList.toggle('on', Number(x.dataset.v) === i));
-      input.dispatchEvent(new Event('input', { bubbles: true }));
+      if (items[i].dataset.v === w.dataset.v) return;
+      w.dataset.v = items[i].dataset.v; w.setAttribute('aria-valuetext', items[i].textContent);
+      items.forEach((x, k) => x.classList.toggle('on', k === i));
+      w.dispatchEvent(new Event('pick', { bubbles: true }));
     };
     const go = i => w.scrollTo({ top: clamp(i, 0, items.length - 1) * WHEEL_H, behavior: 'smooth' });
-    w.scrollTop = Number(input.value) * WHEEL_H;
+    w._sync = () => { const t = idx() * WHEEL_H; if (Math.abs(w.scrollTop - t) > 2) w.scrollTop = t; };
+    w.scrollTop = idx() * WHEEL_H;
     w.addEventListener('scroll', () => set(Math.round(w.scrollTop / WHEEL_H)), { passive: true });
-    w.addEventListener('click', e => { const it = e.target.closest('.wheel-item'); if (it) go(Number(it.dataset.v)); });
+    w.addEventListener('click', e => { const it = e.target.closest('.wheel-item'); if (it) go(items.indexOf(it)); });
     w.addEventListener('keydown', e => {
       if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-      e.preventDefault(); const i = Number(input.value) + (e.key === 'ArrowDown' ? 1 : -1); go(i); set(i);
+      e.preventDefault(); const i = idx() + (e.key === 'ArrowDown' ? 1 : -1); go(i); set(i);
     });
   });
 }
+function syncWheels(root) { root.querySelectorAll('.wheel').forEach(w => { if (w._sync && w.offsetParent) w._sync(); }); }
+// A wheel changed: update the hidden input of its field and let the form recalculate.
+document.addEventListener('pick', e => {
+  const field = e.target.closest('[data-wheel-field], [data-time-wheel]');
+  if (!field) return;
+  const input = field.querySelector('input[type=hidden]'), v = [...field.querySelectorAll('.wheel')].map(w => w.dataset.v);
+  if (field.hasAttribute('data-wheel-field')) input.value = v[0];
+  else {
+    input.value = fromMin((H12 ? (Number(v[0]) % 12) + (v[2] === 'PM' ? 12 : 0) : Number(v[0])) * 60 + Number(v[1]));
+    const t = field.querySelector('[data-time-text]'); if (t) t.textContent = fmtTime(input.value);
+  }
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+});
+// How long it took to fall asleep, as one of four choices.
+const LATENCY = [[0, 'Straight away'], [15, 'About 15 min'], [30, 'About 30 min'], [60, 'An hour or more']];
+const latencyChoice = s => { const m = ((toMin(s.asleep) ?? 0) - (toMin(s.inBed) ?? 0) + 1440) % 1440; return m < 8 ? 0 : m < 23 ? 15 : m < 45 ? 30 : 60; };
 function sheetSleep(date, prefill) {
   const cur = getDay(date).sleep, last = lastSleep(date);
-  const base = cur || Object.assign({ inBed: '23:00', asleep: '23:20', wake: '07:00', up: '07:10' }, last ? { inBed: last.inBed, asleep: last.asleep, wake: last.wake, up: last.up } : {});
+  const base = cur || Object.assign({ inBed: '23:00', asleep: '23:15', wake: '07:00', up: '07:00' }, last ? { inBed: last.inBed, asleep: last.asleep, wake: last.wake, up: last.up } : {});
   const s = Object.assign({ quality: 3, pain: 0, other: 0, factors: [], note: '' }, base, prefill || {});
   const auto = autoFactors(date);
+  // Two times and one tap: bedtime, wake time and roughly how long it took to fall asleep.
+  // "Fell asleep" is worked out from them, and getting up is taken as the wake time.
   openSheet({
     title: `Night before ${date === today() ? 'today' : fmtDay(date)}`,
-    body: `<div class="row2">${field('Got into bed', timeInput('inBed', s.inBed))}${field('Fell asleep (roughly)', timeInput('asleep', s.asleep))}${field('Woke up', timeInput('wake', s.wake))}${field('Got out of bed', timeInput('up', s.up))}</div>
+    body: `<div class="row2 time-wheels">${timeWheel('inBed', 'Went to bed', s.inBed)}${timeWheel('wake', 'Woke up', s.wake)}</div>
+      ${group('Took to fall asleep', seg('lat', LATENCY.map(x => x[1]), latencyChoice(s), { values: LATENCY.map(x => x[0]) }))}
       <p class="calc" data-calc></p>
       ${group('Sleep quality', scale5('quality', s.quality, 'very poor', 'great'))}
       ${optSlider('morning', 'How do you feel after waking up?', morningScore(s), 'Drowsy, groggy', 'Calm, alert', 0, 10)}
@@ -2861,19 +3281,19 @@ function sheetSleep(date, prefill) {
       ${noteField(s.note)}`,
     onInput: form => {
       const v = n => form.elements[n].value;
-      const c = sleepCalc(date, { inBed: v('inBed'), asleep: v('asleep'), wake: v('wake'), up: v('up') });
+      const c = sleepCalc(date, { inBed: v('inBed'), asleep: fromMin(toMin(v('inBed')) + (Number(v('lat')) || 0)), wake: v('wake'), up: v('wake') });
       const out = form.querySelector('[data-calc]');
       const tot = form.querySelector('[data-wake-total]');
       if (!c || c.total <= 0) { out.textContent = 'Waking up should come after falling asleep.'; tot.textContent = ''; return; }
-      out.textContent = `${fmtDur(c.total)} asleep · ${fmtDur(c.inBedDur)} in bed · fell asleep in ${fmtDur(c.latency)}${c.eff != null ? ` · ${c.eff}% asleep` : ''}`;
+      out.textContent = `${fmtDur(c.total)} asleep · ${fmtDur(c.inBedDur)} in bed`;
       const pain = Number(v('pain')) || 0, other = Number(v('other')) || 0, n = c.trips + pain + other;
       const parts = [c.trips ? `${c.trips} for the bathroom (from your log)` : '', pain ? `${pain} from pain` : '', other ? `${other} for other reasons` : ''].filter(Boolean);
       tot.textContent = n ? `You woke up ${n} ${plural(n, 'time', 'times')} in total: ${parts.join(', ')}.` : 'No wake-ups: you slept through.';
     },
     onSave: fd => {
-      const x = { inBed: fd.get('inBed'), asleep: fd.get('asleep') || fd.get('inBed'), wake: fd.get('wake'), up: fd.get('up') || fd.get('wake'), quality: Number(fd.get('quality')) || null, morning: fd.get('morning') === '' || fd.get('morning') == null ? null : Number(fd.get('morning')), pain: num(fd.get('pain')) || 0, other: num(fd.get('other')) || 0, factors: fd.getAll('factor'), note: (fd.get('note') || '').trim() };
+      const x = { inBed: fd.get('inBed'), asleep: fromMin(toMin(fd.get('inBed')) + (Number(fd.get('lat')) || 0)), wake: fd.get('wake'), up: fd.get('wake'), quality: Number(fd.get('quality')) || null, morning: fd.get('morning') === '' || fd.get('morning') == null ? null : Number(fd.get('morning')), pain: num(fd.get('pain')) || 0, other: num(fd.get('other')) || 0, factors: fd.getAll('factor'), note: (fd.get('note') || '').trim() };
       const c = sleepCalc(date, x);
-      if (!c || c.total <= 0 || c.latency < 0) { toast('Check the times: you fell asleep after getting into bed, and woke after falling asleep.'); return false; }
+      if (!c || c.total <= 0 || c.latency < 0) { toast('Check the times: waking up should come after going to sleep.'); return false; }
       mutDay(date, d => { d.sleep = x; });
       const pend = D().settings.sleepPending;
       if (pend && pend.date <= date) { D().settings.sleepPending = null; saveSettings(); }
@@ -2881,11 +3301,10 @@ function sheetSleep(date, prefill) {
     },
     onDelete: cur ? () => { const old = cur; mutDay(date, d => { d.sleep = null; }); toast('Deleted night', 'Undo', () => mutDay(date, d => { d.sleep = old; })); } : null,
   });
-  initWheels($('#sheet'));
 }
 
 /* ---------- medicine editor ---------- */
-function timeRow(t) { return `<div class="time-row"><input type="time" name="time" value="${esc(t)}" aria-label="Dose time" required><button type="button" class="icon-btn" data-act="rmTime" aria-label="Remove this time">${icon('x')}</button></div>`; }
+function timeRow(t) { return `<div class="time-row">${timeCols('time', 'Dose time', t)}<button type="button" class="icon-btn" data-act="rmTime" aria-label="Remove this time">${icon('x')}</button></div>`; }
 function collectMed(fd, base) {
   const m = clone(base);
   m.kind = fd.get('kind') || 'medicine';
@@ -3015,7 +3434,7 @@ function toast(msg, actLabel, fn) {
 /* ---------- sample mode ---------- */
 function enterSample() { SAMPLE = makeSample(); S.date = today(); S.followToday = true; S.histMonth = today().slice(0, 7); S.tab = 'today'; window.scrollTo(0, 0); render(); }
 function exitSample() { SAMPLE = null; S.date = today(); S.followToday = true; S.tab = 'today'; window.scrollTo(0, 0); render(); }
-function markReady() { if (S.ready) return; S.ready = true; render(); }
+function markReady() { if (S.ready) return; S.ready = true; applyTheme(R.settings.theme); render(); }
 
 /* ---------- export / import ---------- */
 // On phones the share menu lets people save straight to Google Drive, iCloud Drive or Files.
@@ -3064,7 +3483,7 @@ async function exportCsv() {
     const date = d.date;
     if (d.sleep) { const c = sleepCalc(date, d.sleep); add(date, d.sleep.wake, 'Sleep', 'Night', c ? fmtDur(c.total) : '', `In bed ${d.sleep.inBed}; asleep ${d.sleep.asleep}; woke ${d.sleep.wake}; up ${d.sleep.up}; quality ${d.sleep.quality ?? ''}/5; woke up feeling ${morningScore(d.sleep) ?? ''}/10; bathroom trips ${c ? c.trips : ''}; woke from pain ${d.sleep.pain || 0}; other ${d.sleep.other || 0}; ${(d.sleep.factors || []).map(sleepFactorLabel).join(', ')}`, d.sleep.note); }
     for (const x of d.naps || []) add(date, x.t, 'Nap', 'Nap', `${x.mins} min`, '', x.note);
-    for (const b of d.bm || []) add(date, b.t, 'Bathroom', `Bristol type ${b.bristol ?? ''}`, '', `Blood: ${BLOOD[b.blood || 0]}${b.mucus ? '; mucus' : ''}; urgency: ${URGENCY[b.urgency || 0]}; pain ${b.pain || 0}/10${b.night ? '; at night' : ''}`, b.note);
+    for (const b of d.bm || []) add(date, b.t, 'Bathroom', `Bristol type ${b.bristol ?? ''}`, '', `Blood: ${BLOOD[b.blood || 0]}${b.bloodAmt ? ` (${AMOUNT[b.bloodAmt].toLowerCase()})` : ''}${b.mucus ? `; mucus: ${MUCUS[mucusLevel(b)].toLowerCase()}` : ''}${b.watery != null ? `; ${WATERY[b.watery].toLowerCase()}` : ''}${b.gas ? '; passed gas too' : ''}; urgency: ${URGENCY[b.urgency || 0]}; pain ${b.pain || 0}/10${b.night ? '; at night' : ''}`, b.note);
     for (const x of d.meals || []) add(date, x.t, 'Meal', x.desc, x.portion, `${x.type}; carbs ${x.carbs ?? '–'}/10; protein ${x.protein ?? '–'}/10; fat ${x.fat ?? '–'}/10; fibre ${x.fiber ?? '–'}/10; tags: ${(x.tags || []).map(tagLabel).join(', ')}`, x.note);
     for (const x of d.doses || []) { const m = meds[x.medId]; add(date, x.t, m ? KINDS[m.kind] : 'Medicine', m ? m.name : x.name, x.amount != null ? `${x.amount} ${x.unit || ''}` : '', x.status === 'taken' ? `Taken${x.slot ? ` (scheduled ${x.slot})` : ''}${x.why ? `; for: ${x.why}` : ''}${x.site ? `; site: ${x.site}` : ''}` : `Skipped: ${x.reason || ''}`, x.note); }
     for (const x of d.exercise || []) add(date, x.t, 'Exercise', x.type, `${x.mins} min`, `${x.intensity}; steps ${x.steps ?? ''}; energy ${x.before ?? ''}→${x.after ?? ''}; symptoms: ${x.symptoms}`, x.note);
@@ -3072,6 +3491,7 @@ async function exportCsv() {
     if (dsc) add(date, '', 'Activity score', scoreDef().short, String(dsc.score), dsc.partial ? 'No check-in that day' : '', '');
     for (const c of d.checkins || []) add(date, c.t, 'Check-in', WELLBEING[c.wellbeing ?? 0], '', `Belly pain ${c.pain}/10; tiredness ${c.fatigue}/10; stress ${stressOf(c) ?? ''}/10; mood ${moodOf(c) ?? ''}/10; bloating ${SEVERITY[c.bloating || 0].toLowerCase()}; nausea ${SEVERITY[c.nausea || 0].toLowerCase()}${c.tenesmus ? '; felt the need, nothing came' : ''}; ${(c.extra || []).map(extraLabel).join(', ')}${c.weight ? `; weight ${c.weight} ${c.weightUnit || ''}` : ''}`, c.note);
     for (const u of d.urges || []) add(date, u.t, 'Urge (nothing came)', '', '', `Urgency: ${URGENCY[u.urgency || 0]}; pain ${u.pain || 0}/10${u.night ? '; at night' : ''}`, u.note);
+    for (const g of d.gas || []) add(date, g.t, 'Gas', '', '', `Urgency: ${URGENCY[g.urgency || 0]}; pain ${g.pain || 0}/10${g.night ? '; at night' : ''}`, g.note);
     if (d.period) add(date, '', 'Period', FLOW[d.period.flow || 0], '', (d.period.symptoms || []).join(', '), d.period.note);
     if (d.flagged) add(date, '', 'Flag', 'Flagged for your doctor', '', '', '');
     for (const n of d.notes || []) add(date, n.t, 'Note', '', '', '', n.text);
@@ -3086,7 +3506,7 @@ async function exportCsv() {
 function mergeDay(a, b) {
   b = normDay(clone(b));
   const out = normDay(Object.assign(blankDay(b.date), clone(a || {})));
-  for (const k of ['bm', 'urges', 'meals', 'doses', 'exercise', 'naps', 'checkins', 'notes']) {
+  for (const k of ['bm', 'urges', 'gas', 'meals', 'doses', 'exercise', 'naps', 'checkins', 'notes']) {
     const map = new Map((out[k] || []).map(x => [x.id, x]));
     for (const x of b[k] || []) map.set(x.id, x);
     out[k] = [...map.values()];
@@ -3155,7 +3575,8 @@ const A = {
     else if (k === 'ex') sheetEx(d, findEntry(d, 'exercise', id));
     else if (k === 'nap') sheetNap(d, findEntry(d, 'naps', id));
     else if (k === 'checkin') { const c = findEntry(d, 'checkins', id); if (c) sheetCheckin(d, c); }
-    else if (k === 'urge') { const u = findEntry(d, 'urges', id); if (u) sheetBm(d, u, true); }
+    else if (k === 'urge') { const u = findEntry(d, 'urges', id); if (u) sheetBm(d, u, 'urge'); }
+    else if (k === 'gas') { const g = findEntry(d, 'gas', id); if (g) sheetBm(d, g, 'gas'); }
     else if (k === 'period') sheetPeriod(d);
   },
   editSleep(el) { sheetSleep(el.dataset.date || S.date); },
@@ -3199,6 +3620,7 @@ const A = {
     const box = el.closest('form').querySelector('[data-times]');
     const last = [...box.querySelectorAll('input')].map(i => i.value).filter(Boolean).sort().pop();
     box.insertAdjacentHTML('beforeend', timeRow(last ? fromMin(Math.min(toMin(last) + 720, 1380)) : '08:00'));
+    initWheels(box);
     sheetCtx && sheetCtx.onInput && sheetCtx.onInput(sheetCtx.form, null);
   },
   rmTime(el) {
@@ -3250,6 +3672,27 @@ const A = {
     if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
   },
   tipDone(el) { const st = R.settings; st.tipsSeen = (st.tipsSeen || []).concat(el.dataset.k); saveSettings(); render(); },
+  sameNight(el) {
+    const date = el.dataset.date, prev = lastNight(date);
+    if (!prev) return;
+    const p = prev.sleep, x = { inBed: p.inBed, asleep: p.asleep || p.inBed, wake: p.wake, up: p.wake, quality: null, morning: null, pain: 0, other: 0, factors: [], note: '' };
+    const c = sleepCalc(date, x);
+    mutDay(date, d => { d.sleep = x; });
+    const pend = D().settings.sleepPending;
+    if (pend && pend.date <= date) { D().settings.sleepPending = null; saveSettings(); }
+    toast(`Logged ${c ? fmtDur(c.total) : ''} of sleep. Tap Edit night to add how you slept.`, 'Undo', () => mutDay(date, d => { d.sleep = null; }));
+  },
+  timeOpen(el) {
+    const strip = el.parentElement.querySelector('.tw-cols'), open = strip.hidden;
+    strip.hidden = !open; el.setAttribute('aria-expanded', open);
+    if (open) syncWheels(strip);
+  },
+  allFlags() { S.allFlags = true; render(); },
+  doctorSummary() { sheetDoctor(); },
+  docRange(el) { sheetDoctor(Number(el.dataset.n)); },
+  docPrint() { printSummary(); },
+  docText() { if (S.doc) saveFile(`ibd-tracker-summary-${today()}.txt`, summaryText(S.doc), 'text/plain'); },
+  actSlide(el) { const box = el.closest('.act-side').querySelector('[data-slides]'), i = Number(el.dataset.i); S.actSlide = i; box.scrollTo({ left: i * (box.children[1].offsetLeft - box.children[0].offsetLeft), behavior: 'smooth' }); el.parentElement.querySelectorAll('.act-dot').forEach((d, k) => d.setAttribute('aria-current', k === i)); },
   alcNo(el) { el.closest('form')._alcDone = true; el.closest('[data-alc]').hidden = true; },
   rmFav(el) {
     const st = D().settings, list = (st.favorites || []).slice(), [gone] = list.splice(Number(el.dataset.i), 1);
@@ -3286,7 +3729,7 @@ const A = {
   addOwnMsg(el) { addOwnMessage(el.closest('form')); },
   rmOwnMsg(el) { const st = D().settings; st.ownMessages = (st.ownMessages || []).filter((m, i) => i !== Number(el.dataset.i)); saveSettings(); render(); },
   rmDose(el) { removeEntry(S.date, 'doses', el.dataset.id, 'dose log'); },
-  rmEntry(el) { removeEntry(S.date, el.dataset.list, el.dataset.id, { bm: 'bathroom trip', urges: 'urge', meals: 'meal', exercise: 'exercise', naps: 'nap', checkins: 'check-in', notes: 'note' }[el.dataset.list]); },
+  rmEntry(el) { removeEntry(S.date, el.dataset.list, el.dataset.id, { bm: 'bathroom trip', urges: 'urge', gas: 'gas entry', meals: 'meal', exercise: 'exercise', naps: 'nap', checkins: 'check-in', notes: 'note' }[el.dataset.list]); },
   rmSleep(el) { const date = el.dataset.date, old = getDay(date).sleep; if (!old) return; mutDay(date, d => { d.sleep = null; }); toast('Deleted night', 'Undo', () => mutDay(date, d => { d.sleep = old; })); },
 
   rmPeriod() { const date = S.date, old = getDay(date).period; if (!old) return; mutDay(date, d => { d.period = null; }); toast('Deleted period entry', 'Undo', () => mutDay(date, d => { d.period = old; })); },
@@ -3361,21 +3804,31 @@ function markSlider(t) {
   box.querySelector('.oval').textContent = box.dataset.words ? sliderWord(box.dataset.words.split('|'), t.value) : t.value;
 }
 document.addEventListener('click', e => { if (e.target.matches && e.target.matches('[data-oslider-input]')) markSlider(e.target); });
+// Optional one-tap choices (.seg.clearable): tapping the chosen one again clears it.
+document.addEventListener('pointerdown', e => { const l = e.target.closest && e.target.closest('.seg.clearable label'); if (l) l.dataset.was = l.querySelector('input').checked ? '1' : ''; });
+document.addEventListener('click', e => {
+  const l = e.target.closest && e.target.closest('.seg.clearable label');
+  if (!l || !l.dataset.was) return;
+  e.preventDefault(); l.dataset.was = '';
+  const input = l.querySelector('input'); input.checked = false;
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+});
+// A reminder time changed on its wheels: save it and update its Google Calendar link (no re-render, so the wheel keeps going).
+function reminderTimeChanged(t) {
+  if (toMin(t.value) == null) return;
+  const st = D().settings, times = (st.reminderTimes || []).slice(), i = Number(t.dataset.i);
+  times[i] = t.value; st.reminderTimes = times; saveSettings();
+  const a = t.form.querySelector(`[data-gcal="${i}"]`); if (a) a.href = gcalLink(t.value);
+}
 document.addEventListener('input', e => {
   const t = e.target;
+  if (t.form && t.form.id === 'reminders-form' && t.name === 'rtime') { reminderTimeChanged(t); return; }
   if (t.dataset && t.dataset.osliderInput) markSlider(t);
   if (t.type === 'range' && t.dataset.out) { const o = document.getElementById(t.dataset.out); if (o) o.textContent = t.value; }
 });
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'f-import' && t.files && t.files[0]) { importFile(t.files[0]); t.value = ''; return; }
-  if (t.form && t.form.id === 'reminders-form' && t.name === 'rtime') {
-    if (toMin(t.value) == null) return;
-    const st = D().settings, times = (st.reminderTimes || []).slice(), i = Number(t.dataset.i);
-    times[i] = t.value; st.reminderTimes = times; saveSettings();
-    const a = t.form.querySelector(`[data-gcal="${i}"]`); if (a) a.href = gcalLink(t.value);
-    return;
-  }
   if (t.form && t.form.id === 'messages-form') {
     const st = D().settings;
     if (t.name === 'showMessages') st.showMessages = t.checked;
@@ -3390,6 +3843,8 @@ document.addEventListener('change', e => {
     if (t.name === 'trackCycle') st.trackCycle = t.checked;
     if (t.name === 'showAlcohol') st.showAlcohol = t.checked;
     if (t.name === 'showSmoking') st.showSmoking = t.checked;
+    if (t.name === 'celebrate') st.celebrate = t.checked;
+    if (t.name === 'theme') { R.settings.theme = ['light', 'dark'].includes(t.value) ? t.value : 'system'; applyTheme(R.settings.theme); if (SAMPLE) { Store.write('meta/settings', R.settings); toast('Settings saved'); return; } }
     if (t.name === 'backupEvery') st.backupEvery = Number(t.value) || 7;
     if (t.name === 'waterGoal') st.waterGoal = clamp(Math.round(num(t.value) || 8), 1, 30);
     if (t.name === 'glassMl') st.glassMl = clamp(Math.round(num(t.value) || 250), 50, 1000);

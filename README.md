@@ -17,6 +17,8 @@ No accounts and no server. Everything a person enters is stored in their own bro
 | `manifest.webmanifest` | Lets phones and computers install it as an app |
 | `sw.js` | Makes it work offline |
 | `_headers` | Security settings Netlify applies to the site |
+| `_redirects` | Keeps this README and `docs/` off the website |
+| `fonts/` | The Nunito font (SIL Open Font License, see `fonts/OFL.txt`) |
 | `icons/` | App icons |
 
 ## Contact email
