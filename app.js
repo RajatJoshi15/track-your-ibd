@@ -13,6 +13,15 @@ function applyTheme(theme) {
   try { localStorage.setItem('ibd-theme', t || 'system'); } catch (e) { /* private browsing */ }
 }
 try { applyTheme(localStorage.getItem('ibd-theme')); } catch (e) { /* storage blocked */ }
+// Text size: 'standard', 'large' or 'larger'. Like the theme, it's copied to this browser's storage
+// so it applies before the data loads. All text in styles.css is sized in rem, so it all scales together.
+const TEXT_SIZES = ['standard', 'large', 'larger'];
+function applyTextSize(size) {
+  const s = TEXT_SIZES.includes(size) ? size : 'standard', root = document.documentElement;
+  if (s === 'standard') delete root.dataset.text; else root.dataset.text = s;
+  try { localStorage.setItem('ibd-text', s); } catch (e) { /* private browsing */ }
+}
+try { applyTextSize(localStorage.getItem('ibd-text')); } catch (e) { /* storage blocked */ }
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const clone = o => (o == null ? o : JSON.parse(JSON.stringify(o)));
@@ -1111,7 +1120,7 @@ function waterCard(date) {
   const day = getDay(date), st = D().settings, n = day.water || 0, goal = st.waterGoal || 8, ml = st.glassMl || 250;
   const pips = Array.from({ length: Math.max(goal, n) }, (_, i) => `<i class="${i < n ? 'on' : ''}"></i>`).join('');
   const mac = mealMacros(day), rated = MACROS.some(([k]) => mac[k] != null);
-  const macHtml = rated ? `<div class="macro-row" aria-label="Average food ratings for this day">${MACROS.map(([k, label, c]) => `<div class="macro"><span class="lbl"><span>${label}</span><span>${mac[k] != null ? macroWord(k, Math.round(mac[k])) : '–'}</span></span><div class="macro-bar ${c}"><i style="width:${(mac[k] || 0) * 10}%"></i></div></div>`).join('')}</div>` : '';
+  const macHtml = rated ? `<div class="macro-row" role="group" aria-label="Average food ratings for this day">${MACROS.map(([k, label, c]) => `<div class="macro"><span class="lbl"><span>${label}</span><span>${mac[k] != null ? macroWord(k, Math.round(mac[k])) : '–'}</span></span><div class="macro-bar ${c}"><i style="width:${(mac[k] || 0) * 10}%"></i></div></div>`).join('')}</div>` : '';
   const counter = (k, ic, label, one, many) => {
     const list = day[k] || [], c = list.length, last = list[list.length - 1];
     return `<div class="water-row counter k-${k}">${icon(ic)}<div class="grow"><strong>${label}</strong> <span class="muted">${c ? `${c} ${plural(c, one, many)}${last && date === today() ? ` · last at ${fmtTime(last)}` : ''}` : 'None'}</span></div>
@@ -1643,6 +1652,7 @@ function viewMore() {
         <label class="toggle"><input type="checkbox" name="showSmoking" id="s-smoking" ${st.showSmoking !== false ? 'checked' : ''}><span>Show the smoking counter on Today</span></label>
         <label class="toggle"><input type="checkbox" name="celebrate" id="s-celebrate" ${st.celebrate !== false ? 'checked' : ''}><span>Celebration animations <span class="hint">small animations when you reach a goal; off automatically if your phone is set to reduce motion</span></span></label>
         ${group('Appearance', seg('theme', ['Match my phone', 'Light', 'Dark'], R.settings.theme || 'system', { values: ['system', 'light', 'dark'] }))}
+        ${group('Text size', seg('textSize', ['Standard', 'Large', 'Larger'], R.settings.textSize || 'standard', { values: TEXT_SIZES }) + '<span class="hint">Makes all the writing in the app bigger.</span>')}
         <div class="row3">
           <label class="field"><span class="lbl">Water goal (glasses)</span><input type="number" id="s-goal" name="waterGoal" min="1" max="30" value="${st.waterGoal}"></label>
           <label class="field"><span class="lbl">Glass size (mL)</span><input type="number" id="s-glass" name="glassMl" min="50" max="1000" step="10" value="${st.glassMl}"></label>
@@ -1908,7 +1918,7 @@ function impactChart(list, m) {
   const rows = list.map(o => {
     const w = (Math.abs(o.d) / max) * 42, up = o.d >= 0;
     const bar = `${up ? 'left' : 'right'}:50%;width:${w}%`, val = `${up ? 'left' : 'right'}:calc(50% + ${w}% + 6px)`, tip = m.tip(o);
-    return `<div class="impact-row" data-tip="${esc(tip)}" aria-label="${esc(tip.replace(/\n/g, '. '))}">
+    return `<div class="impact-row" role="listitem" data-tip="${esc(tip)}" aria-label="${esc(tip.replace(/\n/g, '. '))}">
       <div class="impact-label"><span>${esc(o.label)}</span><span class="n">${o.n} ${plural(o.n, m.unit[0], m.unit[1])}</span></div>
       <div class="impact-track"><span class="impact-bar ${impactClass(o.d, m.flat)}" style="${bar}"></span><span class="impact-val" style="${val}">${signed(o.d)}</span></div>
     </div>`;
@@ -2203,7 +2213,7 @@ function topRounded(x, y, w, h, r) {
   r = Math.min(r, w / 2, h);
   return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
 }
-function svgWrap(f, body) { return `<svg width="${f.W}" height="${f.H}" viewBox="0 0 ${f.W} ${f.H}" role="img">${body}</svg>`; }
+function svgWrap(f, body) { return `<svg width="${f.W}" height="${f.H}" viewBox="0 0 ${f.W} ${f.H}" aria-hidden="true" focusable="false">${body}</svg>`; }
 function emptyChart(el, msg) { el.innerHTML = `<div class="chart-empty">${msg}</div>`; }
 
 function chartScore(el, rows) {
@@ -2327,6 +2337,56 @@ function chartCount(el, rows, key, color, unit, empty, goal, metColor) {
   const tip = r => `${fmtDay(r.date)}\n${r[key] ? `${r[key]} ${plural(r[key], unit[0], unit[1])}` : `None logged`}`;
   el.innerHTML = svgWrap(f, `${f.grid}${bars}${ref}${f.hits(tip)}`);
 }
+// What a chart shows, in words, for screen readers.
+const CHART_UNITS = { water: ['glass', 'glasses'], drinks: ['drink', 'drinks'], cigs: ['cigarette', 'cigarettes'] };
+function chartSummary(kind, rows) {
+  const stat = k => { const v = rows.filter(r => r[k] != null).map(r => r[k]); return v.length ? { n: v.length, avg: round1(mean(v)), min: Math.min(...v), max: Math.max(...v) } : null; };
+  const count = k => { const v = rows.map(r => r[k] || 0); return { total: v.reduce((a, b) => a + b, 0), days: v.filter(Boolean).length }; };
+  if (kind === 'score') {
+    const x = stat('score'), last = rows.slice().reverse().find(r => r.score != null);
+    if (!x) return '';
+    return `${x.n} ${plural(x.n, 'day', 'days')} with a score. Average ${fmtNum(x.avg)}, lowest ${fmtNum(x.min)}, highest ${fmtNum(x.max)}.${last ? ` Latest ${last.score} (${band(last.score).label}) on ${fmtDay(last.date)}.` : ''}`;
+  }
+  if (kind === 'trips') {
+    const c = count('trips'), b = count('blood');
+    return `${c.total} ${plural(c.total, 'trip', 'trips')} on ${c.days} ${plural(c.days, 'day', 'days')}, ${b.total} with blood. About ${fmtNum(round1(c.total / Math.max(1, rows.length)))} a day.`;
+  }
+  if (kind === 'sleep') {
+    const x = stat('sleep');
+    return x ? `${x.n} ${plural(x.n, 'night', 'nights')} logged. Average ${fmtDur(x.avg * 60)}, shortest ${fmtDur(x.min * 60)}, longest ${fmtDur(x.max * 60)}.` : '';
+  }
+  if (kind === 'food') {
+    const parts = MACROS.map(([k, label]) => { const x = stat(k); return x ? `${label.toLowerCase()} ${fmtNum(x.avg)}` : null; }).filter(Boolean);
+    return parts.length ? `Average ratings out of 10: ${parts.join(', ')}.` : '';
+  }
+  if (CHART_UNITS[kind]) {
+    const c = count(kind), u = CHART_UNITS[kind];
+    let t = `${c.total} ${plural(c.total, u[0], u[1])} on ${c.days} ${plural(c.days, 'day', 'days')}.`;
+    if (kind === 'water') { const g = D().settings.waterGoal || 8, met = rows.filter(r => (r.water || 0) >= g).length; t += ` Goal of ${g} reached on ${met} ${plural(met, 'day', 'days')}.`; }
+    return t;
+  }
+  return '';
+}
+function chartA11y(el, rows) {
+  const base = el.dataset.label || (el.dataset.label = el.getAttribute('aria-label') || 'Chart');
+  el._i = null;
+  if (!el.querySelector('svg')) { ['role', 'tabindex', 'aria-label'].forEach(a => el.removeAttribute(a)); return; }
+  const span = rows.length ? `, ${fmtDay(rows[0].date)} to ${fmtDay(rows[rows.length - 1].date)}` : '';
+  el.setAttribute('role', 'img');
+  el.tabIndex = 0;
+  el.setAttribute('aria-label', `${base}${span}. ${chartSummary(el.dataset.chart, rows)} Each day is listed under Daily numbers. Use the left and right arrow keys to step through the days.`);
+}
+// Keyboard: left and right arrows (and Home and End) move through the days and show each day's tooltip.
+function stepChart(el, key) {
+  const hits = [...el.querySelectorAll('.hit')], n = hits.length;
+  if (!n) return;
+  const i = key === 'Home' ? 0 : key === 'End' || el._i == null ? n - 1 : clamp(el._i + (key === 'ArrowRight' ? 1 : -1), 0, n - 1);
+  el._i = i;
+  hits.forEach((h, k) => h.classList.toggle('on', k === i));
+  placeTip(hits[i], hits[i].dataset.tip);
+  const live = $('#chart-live');
+  if (live) live.textContent = hits[i].dataset.tip.replace(/\n/g, ', ');
+}
 function drawCharts() {
   const rows = S.trendData;
   if (!rows) return;
@@ -2336,13 +2396,22 @@ function drawCharts() {
     drinks: (el, r) => chartCount(el, r, 'drinks', 'var(--c-meal)', ['drink', 'drinks'], 'No alcohol logged in this period.'),
     cigs: (el, r) => chartCount(el, r, 'cigs', 'var(--muted)', ['cigarette', 'cigarettes'], 'No smoking logged in this period.'),
   };
-  document.querySelectorAll('.chart[data-chart]').forEach(el => { const fn = fns[el.dataset.chart]; if (fn) fn(el, rows); });
+  document.querySelectorAll('.chart[data-chart]').forEach(el => { const fn = fns[el.dataset.chart]; if (fn) { fn(el, rows); chartA11y(el, rows); } });
 }
 
 /* ---------- sheet infrastructure ---------- */
-let sheetCtx = null;
+let sheetCtx = null, sheetOpener = null;
+// A way to find the same control again if the page re-rendered while the sheet was open.
+function controlSelector(el) {
+  const d = Object.entries(el.dataset || {}).filter(([k]) => k !== 'tip');
+  if (d.length) return d.map(([k, v]) => `[data-${k.replace(/[A-Z]/g, c => '-' + c.toLowerCase())}="${CSS.escape(v)}"]`).join('');
+  return el.id ? '#' + CSS.escape(el.id) : null;
+}
 function openSheet({ title, body, onSave, onDelete, onInput, saveLabel = 'Save', extraFoot = '' }) {
   const root = $('#sheet');
+  // Remember what opened the sheet (unless one sheet is opening another), so focus can go back there.
+  const a = document.activeElement;
+  if (a && a !== document.body && !root.contains(a)) sheetOpener = { el: a, sel: controlSelector(a) };
   root.innerHTML = `<div class="scrim" data-act="closeSheet"></div>
     <form class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabindex="-1" novalidate>
       <header class="sheet-head"><h2 id="sheet-title">${esc(title)}</h2><button type="button" class="icon-btn" data-act="closeSheet" aria-label="Close">${icon('x')}</button></header>
@@ -2352,6 +2421,7 @@ function openSheet({ title, body, onSave, onDelete, onInput, saveLabel = 'Save',
     </form>`;
   root.hidden = false;
   document.body.classList.add('sheet-open');
+  $('.app').inert = true; // keyboard and screen readers stay inside the sheet
   const form = $('form', root);
   sheetCtx = { onSave, onDelete, onInput, form };
   form.addEventListener('submit', e => {
@@ -2382,7 +2452,16 @@ function closeSheet() {
   const root = $('#sheet');
   root.hidden = true; root.innerHTML = '';
   document.body.classList.remove('sheet-open');
+  $('.app').inert = false;
   sheetCtx = null;
+  // Put focus back on the control that opened the sheet (after any re-render), unless another sheet opened.
+  requestAnimationFrame(() => {
+    const o = sheetOpener;
+    if (sheetCtx || !o) return;
+    sheetOpener = null;
+    const t = o.el.isConnected ? o.el : o.sel ? document.querySelector(`#main ${o.sel}, #nav ${o.sel}`) : null;
+    if (t && !t.disabled) t.focus({ preventScroll: true });
+  });
 }
 function formVal(form, name) {
   const el = form.elements[name];
@@ -3434,7 +3513,7 @@ function toast(msg, actLabel, fn) {
 /* ---------- sample mode ---------- */
 function enterSample() { SAMPLE = makeSample(); S.date = today(); S.followToday = true; S.histMonth = today().slice(0, 7); S.tab = 'today'; window.scrollTo(0, 0); render(); }
 function exitSample() { SAMPLE = null; S.date = today(); S.followToday = true; S.tab = 'today'; window.scrollTo(0, 0); render(); }
-function markReady() { if (S.ready) return; S.ready = true; applyTheme(R.settings.theme); render(); }
+function markReady() { if (S.ready) return; S.ready = true; applyTheme(R.settings.theme); applyTextSize(R.settings.textSize); render(); }
 
 /* ---------- export / import ---------- */
 // On phones the share menu lets people save straight to Google Drive, iCloud Drive or Files.
@@ -3845,6 +3924,7 @@ document.addEventListener('change', e => {
     if (t.name === 'showSmoking') st.showSmoking = t.checked;
     if (t.name === 'celebrate') st.celebrate = t.checked;
     if (t.name === 'theme') { R.settings.theme = ['light', 'dark'].includes(t.value) ? t.value : 'system'; applyTheme(R.settings.theme); if (SAMPLE) { Store.write('meta/settings', R.settings); toast('Settings saved'); return; } }
+    if (t.name === 'textSize') { R.settings.textSize = TEXT_SIZES.includes(t.value) ? t.value : 'standard'; applyTextSize(R.settings.textSize); if (SAMPLE) { Store.write('meta/settings', R.settings); toast('Settings saved'); return; } }
     if (t.name === 'backupEvery') st.backupEvery = Number(t.value) || 7;
     if (t.name === 'waterGoal') st.waterGoal = clamp(Math.round(num(t.value) || 8), 1, 30);
     if (t.name === 'glassMl') st.glassMl = clamp(Math.round(num(t.value) || 250), 50, 1000);
@@ -3857,6 +3937,8 @@ document.addEventListener('submit', e => { if (['settings-form', 'messages-form'
 document.addEventListener('toggle', e => { const k = e.target.dataset && e.target.dataset.key; if (k) S.open[k] = e.target.open; }, true);
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && sheetCtx) closeSheet();
+  const chart = e.target && e.target.closest && e.target.closest('.chart[tabindex]');
+  if (chart && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) { e.preventDefault(); stepChart(chart, e.key); }
   if (e.key === 'Enter' && e.target && e.target.id === 'f-newtag') { e.preventDefault(); addCustomTag(e.target.closest('form')); }
   if (e.key === 'Enter' && e.target && e.target.id === 'f-ownmsg') { e.preventDefault(); addOwnMessage(e.target.closest('form')); }
   if (e.key === 'Enter' && e.target && e.target.id === 'f-quicknote') { e.preventDefault(); A.saveNote(e.target); }
@@ -3865,6 +3947,18 @@ document.addEventListener('keydown', e => {
 
 /* tooltip for calendar cells (mouse only) */
 const tip = $('#tip');
+function placeTip(el, text) {
+  tip.textContent = text; tip.hidden = false;
+  const r = el.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = clamp(r.left + r.width / 2 - w / 2, 8, window.innerWidth - w - 8) + 'px';
+  tip.style.top = (r.top - h - 8 < 8 ? r.bottom + 8 : r.top - h - 8) + 'px';
+}
+document.addEventListener('focusout', e => {
+  const el = e.target && e.target.closest && e.target.closest('.chart[tabindex]');
+  if (!el) return;
+  tip.hidden = true; el._i = null;
+  el.querySelectorAll('.hit.on').forEach(h => h.classList.remove('on'));
+});
 document.addEventListener('pointerover', e => {
   const el = e.target.closest && e.target.closest('[data-tip]');
   if (!el || e.pointerType !== 'mouse') return;
